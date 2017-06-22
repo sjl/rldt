@@ -1,0 +1,6 @@
+scratch.lisp
+build/rldt.app
+
+syntax: re
+build/rldt$
+build/rldt-mac$
