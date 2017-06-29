@@ -15,7 +15,7 @@ build/rldt: $(lisps)
 build/rldt-mac: $(lisps)
 	sbcl --load "build/build-mac.lisp"
 
-mac: build/rldt-mac build/Info.plist lib/libBearLibTerminal.dylib
+mac: build/rldt-mac build/Info.plist lib/libBearLibTerminal.dylib assets/*
 	mkdir -p build/rldt.app/Contents/MacOS
 	mkdir -p build/rldt.app/Contents/Resources
 	mkdir -p build/rldt.app/Contents/Frameworks
@@ -23,6 +23,7 @@ mac: build/rldt-mac build/Info.plist lib/libBearLibTerminal.dylib
 	cp build/Info.plist build/rldt.app/Contents/
 	cp build/rldt.icns build/rldt.app/Contents/Resources/
 	cp lib/libBearLibTerminal.dylib build/rldt.app/Contents/Frameworks/
+	rsync -av assets/ build/rldt.app/Contents/Resources/assets
 
 binary: build/rldt
 
@@ -30,5 +31,5 @@ binary: build/rldt
 
 clean:
 	rm -rf build/rldt.app
-	rm build/rldt
-	rm build/rldt-mac
+	rm -f build/rldt
+	rm -f build/rldt-mac

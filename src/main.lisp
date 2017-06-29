@@ -6,8 +6,57 @@
 (defparameter *screen-width* 40)
 (defparameter *screen-height* 40)
 
+(defparameter *map-width* 40)
+(defparameter *map-height* 35)
+
+(defconstant +color-dark-wall+ (blt:hsva 1.0 0.0 0.7))
+(defconstant +color-dark-ground+ (blt:hsva 1.0 0.0 0.5))
+
 (defparameter *layer-bg* 0)
 (defparameter *layer-mobs* 1)
+
+(defparameter *enable-tiles* nil)
+
+(defparameter *assets-directory* "./assets/")
+
+
+;;;; Utils --------------------------------------------------------------------
+(defun print-tile (x y glyph)
+  ;; todo: replace with (blt:font) for the next version of blt
+  (blt:print x y (format nil "[font=tile]~A" glyph)))
+
+(defun asset-path (filename)
+  (pr (concatenate 'string *assets-directory* filename)))
+
+
+;;;; Tiles --------------------------------------------------------------------
+(defclass* tile ()
+  (blocks-movement blocks-sight))
+
+
+(defun make-tile (&key blocks-movement (blocks-sight blocks-movement))
+  (make-instance 'tile
+    :blocks-movement blocks-movement
+    :blocks-sight blocks-sight))
+
+(defun make-map ()
+  (let ((map (make-array (list *map-width* *map-height*))))
+    (iterate
+      (for-nested ((x :from 0 :below *map-width*)
+                   (y :from 0 :below *map-height*)))
+      (setf (aref map x y) (make-tile)))
+    (setf (tile-blocks-movement (aref map 5 5)) t
+          (tile-blocks-sight (aref map 5 5)) t
+          (tile-blocks-movement (aref map 15 5)) t
+          (tile-blocks-sight (aref map 15 5)) t)
+    map))
+
+
+(defparameter *map* (make-map))
+
+
+(defun map-blocks-movement-p (x y)
+  (tile-blocks-movement (aref *map* x y)))
 
 
 ;;;; Game Objects -------------------------------------------------------------
@@ -23,16 +72,19 @@
 (defun make-object (x y &rest key-slots)
   (apply #'make-instance 'object :x x :y y key-slots))
 
+
 (defun move-object (object dx dy)
-  (incf (object-x object) dx)
-  (incf (object-y object) dy)
+  (with-object (object)
+    (unless (map-blocks-movement-p (+ x dx) (+ y dy))
+      (incf x dx)
+      (incf y dy)))
   (values))
 
 (defun draw-object (object)
   (with-object (object)
     (setf (blt:layer) layer
-          (blt:color) color
-          (blt:cell-char x y) glyph))
+          (blt:color) color)
+    (print-tile x y glyph))
   (values))
 
 (defun clear-object (object)
@@ -41,28 +93,44 @@
           (blt:cell-char x y) #\space))
   (values))
 
+
 (defparameter *player*
   (make-object (truncate *screen-width* 2)
                (truncate *screen-height* 2)
                :glyph #\@
                :layer *layer-mobs*))
 
-(defparameter *npc*
+(defparameter *fungus*
   (make-object 4 4
                :glyph #\F
                :color (blt:hsva 0.3 0.8 1.0)
                :layer *layer-mobs*))
 
-(defparameter *objects* (list *player* *npc*))
+(defparameter *goblin*
+  (make-object 2 2
+               :glyph #\g
+               :layer *layer-mobs*))
+
+(defparameter *objects* (list *player* *fungus* *goblin*))
 
 
 ;;;; Config -------------------------------------------------------------------
+(defun config-fonts ()
+  (blt:set "font: ~A, size=16x16, align=dead-center;"
+           (asset-path "ProggySquare/ProggySquare.ttf"))
+  (blt:set "tile font: ~A, size=16x16, align=dead-center;"
+           (asset-path "ProggySquare/ProggySquare.ttf"))
+  (when *enable-tiles*
+    (blt:set "tile 0x0000: ~A, size=16x16, resize=16x16, align=dead-center, codepage=~A;"
+             (asset-path "tiles.png")
+             (asset-path "codepage.txt"))))
+
 (defun config ()
   (blt:set (format nil "window.size = ~Dx~D" *screen-width* *screen-height*))
   (blt:set "window.title = /r/roguelikedev")
-  (blt:set "window.cellsize = 20x20")
+  (blt:set "window.cellsize = 16x16")
   (blt:set "output.vsync = true")
-  (blt:set "font: ./assets/ProggySquare/ProggySquare.ttf, size=20x20, spacing=1x1, align=dead-center;")
+  (config-fonts)
   (setf *running* t))
 
 
@@ -70,29 +138,43 @@
 (defun draw-objects ()
   (map nil #'draw-object *objects*))
 
+(defun draw-map ()
+  (setf (blt:layer) *layer-bg*)
+  (iterate (for (tile x y) :in-array *map*)
+           (for wall? = (tile-blocks-sight tile))
+           (setf (blt:color) (if wall? +color-dark-wall+ +color-dark-ground+))
+           (print-tile x y (if wall? #\# #\.))))
+
 (defun clear-objects ()
   (map nil #'clear-object *objects*))
 
 (defun draw ()
+  (draw-map)
   (draw-objects)
   (blt:refresh)
   (clear-objects))
 
 
 ;;;; Input --------------------------------------------------------------------
-(defun event ()
+(defun read-event ()
   (if (blt:has-input-p)
     (blt:key-case (blt:read)
+      (:f1 :refresh-config)
+      (:f2 :flip-tiles)
+
       (:up :move-up)
       (:down :move-down)
       (:left :move-left)
       (:right :move-right)
+
       (:escape :quit)
       (:close :quit))
     :done))
 
 (defun handle-event (event)
   (ecase event
+    (:refresh-config (config))
+    (:flip-tiles (notf *enable-tiles*) (config))
     (:move-up (move-object *player* 0 -1))
     (:move-down (move-object *player* 0 1))
     (:move-left (move-object *player* -1 0))
@@ -101,7 +183,7 @@
 
 (defun handle-events ()
   (iterate
-    (for event = (event))
+    (for event = (read-event))
     (until (eql event :done))
     (when event
       (handle-event event))))
@@ -132,4 +214,5 @@
 (defun main-mac ()
   (unfuck-mac-path)
   (cffi:use-foreign-library blt:bearlibterminal)
+  (setf *assets-directory* "./Contents/Resources/assets/")
   (main))
