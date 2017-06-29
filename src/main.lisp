@@ -14,8 +14,13 @@
 
 (defparameter *layer-bg* 0)
 (defparameter *layer-mobs* 1)
+(defparameter *layer-mouse* 10)
+
+(defparameter *mouse-x* 0)
+(defparameter *mouse-y* 0)
 
 (defparameter *enable-tiles* nil)
+(defparameter *show-mouse?* t)
 
 (defparameter *assets-directory* "./assets/")
 
@@ -26,7 +31,7 @@
   (blt:print x y (format nil "[font=tile]~A" glyph)))
 
 (defun asset-path (filename)
-  (pr (concatenate 'string *assets-directory* filename)))
+  (concatenate 'string *assets-directory* filename))
 
 
 ;;;; Tiles --------------------------------------------------------------------
@@ -130,6 +135,7 @@
   (blt:set "window.title = /r/roguelikedev")
   (blt:set "window.cellsize = 16x16")
   (blt:set "output.vsync = true")
+  (blt:set "input.filter = keyboard, mouse")
   (config-fonts)
   (setf *running* t))
 
@@ -138,6 +144,10 @@
 (defun draw-objects ()
   (map nil #'draw-object *objects*))
 
+(defun clear-objects ()
+  (map nil #'clear-object *objects*))
+
+
 (defun draw-map ()
   (setf (blt:layer) *layer-bg*)
   (iterate (for (tile x y) :in-array *map*)
@@ -145,27 +155,46 @@
            (setf (blt:color) (if wall? +color-dark-wall+ +color-dark-ground+))
            (print-tile x y (if wall? #\# #\.))))
 
-(defun clear-objects ()
-  (map nil #'clear-object *objects*))
+
+(defun draw-mouse ()
+  (when *show-mouse?*
+    (setf (blt:layer) *layer-mouse*
+          (blt:color) (blt:hsva 1.0 0.0 1.0 0.5)
+          (blt:cell-char *mouse-x* *mouse-y*) #\full_block)))
+
+(defun clear-mouse ()
+  (when *show-mouse?*
+    (setf (blt:layer) *layer-mouse*
+          (blt:cell-char *mouse-x* *mouse-y*) #\space)))
+
 
 (defun draw ()
   (draw-map)
   (draw-objects)
+  (draw-mouse)
   (blt:refresh)
-  (clear-objects))
+  (clear-objects)
+  (clear-mouse))
 
 
 ;;;; Input --------------------------------------------------------------------
+(defun update-mouse-location ()
+  (when *show-mouse?*
+    (setf (values *mouse-x* *mouse-y*) (blt:mouse))))
+
 (defun read-event ()
   (if (blt:has-input-p)
     (blt:key-case (blt:read)
       (:f1 :refresh-config)
       (:f2 :flip-tiles)
+      (:f3 :flip-mouse)
 
       (:up :move-up)
       (:down :move-down)
       (:left :move-left)
       (:right :move-right)
+
+      (:mouse-move :mouse-move)
 
       (:escape :quit)
       (:close :quit))
@@ -175,6 +204,8 @@
   (ecase event
     (:refresh-config (config))
     (:flip-tiles (notf *enable-tiles*) (config))
+    (:flip-mouse (notf *show-mouse?*) (update-mouse-location))
+    (:mouse-move (update-mouse-location))
     (:move-up (move-object *player* 0 -1))
     (:move-down (move-object *player* 0 1))
     (:move-left (move-object *player* -1 0))
