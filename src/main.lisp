@@ -39,29 +39,7 @@
   (max (abs (- x1 x2))
        (abs (- y1 y2))))
 
-(defun line-lerp% (x1 y1 x2 y2)
-  (declare (type fixnum x1 y1 x2 y2)
-           (optimize (speed 3)))
-  (if (and (= x1 x2) (= y1 y2))
-    (make-array 1 :initial-element (cons x1 y1) :fill-pointer 1)
-    (iterate
-      (declare (type fixnum distance points _)
-               (type single-float n x1f x2f y1f y2f))
-      (with distance = (distance x1 y1 x2 y2))
-      (with points = (1+ distance))
-      (with result = (make-array points :fill-pointer 0))
-      (with x1f = (float x1))
-      (with x2f = (float x2))
-      (with y1f = (float y1))
-      (with y2f = (float y2))
-      (for _ :from 0 :below points)
-      (for n :from 0.0 :by (/ 1.0 distance))
-      (vector-push (cons (round (lerp x1f x2f n))
-                         (round (lerp y1f y2f n)))
-                   result)
-      (finally (return result)))))
-
-(defun line-lerp (x1 y1 x2 y2)
+(defun line (x1 y1 x2 y2)
   (if (and (= x1 x2) (= y1 y2))
     (make-array 1 :initial-element (cons x1 y1) :fill-pointer 1)
     (iterate
@@ -202,8 +180,10 @@
   (when *show-mouse?*
     (setf (blt:layer) *layer-mouse*
           (blt:color) (blt:hsva 1.0 0.0 1.0 0.5))
-    (iterate (for (x . y) :in-vector (line-bres 0 0 *mouse-x* *mouse-y*))
-             (setf (blt:cell-char x y) #\full_block))
+    (iterate
+      (for (x . y) :in-vector (line (object-x *player*) (object-y *player*)
+                                    *mouse-x* *mouse-y*))
+      (setf (blt:cell-char x y) #\full_block))
     (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
           (blt:cell-char *mouse-x* *mouse-y*) #\full_block)))
 
