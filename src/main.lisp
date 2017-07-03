@@ -14,6 +14,7 @@
 
 (defparameter *layer-bg* 0)
 (defparameter *layer-mobs* 1)
+(defparameter *layer-fov* 9)
 (defparameter *layer-mouse* 10)
 
 (defparameter *mouse-x* 0)
@@ -82,6 +83,9 @@
 
 (defun map-blocks-movement-p (x y)
   (tile-blocks-movement (aref *map* x y)))
+
+(defun map-blocks-sight-p (x y)
+  (tile-blocks-sight (aref *map* x y)))
 
 
 ;;;; Game Objects -------------------------------------------------------------
@@ -160,6 +164,37 @@
   (setf *running* t))
 
 
+;;;; Vision -------------------------------------------------------------------
+(defun make-fov-map ()
+  (make-array (array-dimensions *map*) :element-type 'boolean :initial-element nil))
+
+(defparameter *fov-map* (make-fov-map))
+
+(defun clear-fov-map ()
+  (fill-multidimensional-array *fov-map* nil))
+
+(defun in-bounds-p (x y)
+  (and (in-range-p 0 x *map-width*)
+       (in-range-p 0 y *map-height*)))
+
+(defun opaquep (x y)
+  (if (in-bounds-p x y)
+    (map-blocks-sight-p x y)
+    nil))
+
+(defun mark-visible (x y)
+  (when (in-bounds-p x y)
+    (setf (aref *fov-map* x y) t)))
+
+(defun visiblep (x y)
+  (aref *fov-map* x y))
+
+(defun recompute-fov ()
+  (clear-fov-map)
+  (compute-fov (object-x *player*) (object-y *player*) 10
+               #'opaquep #'mark-visible))
+
+
 ;;;; Rendering ----------------------------------------------------------------
 (defun draw-objects ()
   (map nil #'draw-object *objects*))
@@ -192,13 +227,26 @@
     (blt:clear-layer *layer-mouse*)))
 
 
+(defun draw-fov ()
+  (setf (blt:layer) *layer-fov*
+        (blt:color) (blt:hsva 0.3 0.3 1.0 0.3))
+  (iterate
+    (for (visible? x y) :in-array *fov-map*)
+    (when visible?
+      (setf (blt:cell-char x y) #\full_block))))
+
+(defun clear-fov ()
+  (blt:clear-layer *layer-fov*))
+
 (defun draw ()
   (draw-map)
   (draw-objects)
   (draw-mouse)
+  (draw-fov)
   (blt:refresh)
   (clear-objects)
-  (clear-mouse))
+  (clear-mouse)
+  (clear-fov))
 
 
 ;;;; Input --------------------------------------------------------------------
@@ -206,12 +254,19 @@
   (when *show-mouse?*
     (setf (values *mouse-x* *mouse-y*) (blt:mouse))))
 
+(defun toggle-wall ()
+  (let ((tile (aref *map* *mouse-x* *mouse-y*)))
+    (notf (tile-blocks-movement tile))
+    (notf (tile-blocks-sight tile))))
+
+
 (defun read-event ()
   (if (blt:has-input-p)
     (blt:key-case (blt:read)
       (:f1 :refresh-config)
       (:f2 :flip-tiles)
       (:f3 :flip-mouse)
+      (:f4 :recompute-fov)
 
       (:up :move-up)
       (:down :move-down)
@@ -219,6 +274,7 @@
       (:right :move-right)
 
       (:mouse-move :mouse-move)
+      (:mouse-left :toggle-wall)
 
       (:escape :quit)
       (:close :quit))
@@ -230,6 +286,8 @@
     (:flip-tiles (notf *enable-tiles*) (config))
     (:flip-mouse (notf *show-mouse?*) (update-mouse-location))
     (:mouse-move (update-mouse-location))
+    (:toggle-wall (toggle-wall))
+    (:recompute-fov (recompute-fov))
     (:move-up (move-object *player* 0 -1))
     (:move-down (move-object *player* 0 1))
     (:move-left (move-object *player* -1 0))
