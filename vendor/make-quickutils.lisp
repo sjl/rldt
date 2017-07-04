@@ -7,6 +7,7 @@
                :with-gensyms
                :curry
                :rcurry
+               :map-tree
 
                )
   :package "RL.QUICKUTILS")

@@ -2,7 +2,7 @@
 ;;;; See http://quickutil.org for details.
 
 ;;;; To regenerate:
-;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:WITH-GENSYMS :CURRY :RCURRY) :ensure-package T :package "RL.QUICKUTILS")
+;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:WITH-GENSYMS :CURRY :RCURRY :MAP-TREE) :ensure-package T :package "RL.QUICKUTILS")
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (find-package "RL.QUICKUTILS")
@@ -15,7 +15,7 @@
 (when (boundp '*utilities*)
   (setf *utilities* (union *utilities* '(:STRING-DESIGNATOR :WITH-GENSYMS
                                          :MAKE-GENSYM-LIST :ENSURE-FUNCTION
-                                         :CURRY :RCURRY))))
+                                         :CURRY :RCURRY :MAP-TREE))))
 
   (deftype string-designator ()
     "A string designator type. A string designator is either a string, a symbol,
@@ -113,7 +113,20 @@ with and `arguments` to `function`."
         (declare (dynamic-extent more))
         (multiple-value-call fn (values-list more) (values-list arguments)))))
   
+
+  (defun map-tree (function tree)
+    "Map `function` to each of the leave of `tree`."
+    (check-type tree cons)
+    (labels ((rec (tree)
+               (cond
+                 ((null tree) nil)
+                 ((atom tree) (funcall function tree))
+                 ((consp tree)
+                  (cons (rec (car tree))
+                        (rec (cdr tree)))))))
+      (rec tree)))
+  
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (export '(with-gensyms with-unique-names curry rcurry)))
+  (export '(with-gensyms with-unique-names curry rcurry map-tree)))
 
 ;;;; END OF quickutils.lisp ;;;;

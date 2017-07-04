@@ -18,4 +18,5 @@
                (:module "src" :serial t
                 :components
                 ((:file "field-of-view")
+                 (:file "binary-space-partitioning")
                  (:file "main")))))

@@ -78,80 +78,14 @@
 
 
 ;;;; Map ----------------------------------------------------------------------
-(defstruct (rect (:constructor make-rect%))
-  x1 y1 x2 y2)
-
-(define-with-macro rect x1 y1 x2 y2)
-
-(defun make-rect (x y w h)
-  (make-rect% :x1 x
-              :y1 y
-              :x2 (+ x w -1)
-              :y2 (+ y h -1)))
-
-(defun rect-center (rect)
-  (with-rect (rect)
-    (values (truncate (+ x1 x2) 2)
-            (truncate (+ y1 y2) 2))))
-
-(defun rect-intersects-p (rect-a rect-b)
-  (with-rect (rect-a ax1 ay1 ax2 ay2)
-    (with-rect (rect-b bx1 by1 bx2 by2)
-      (and (<= ax1 bx2)
-           (>= ax2 bx1)
-           (<= ay1 by2)
-           (>= ay2 by1)))))
+(defvar *map* nil)
+(defvar *bsp* nil)
 
 
 (defun carve-tile (map x y)
   (let ((tile (aref map x y)))
     (setf (tile-blocks-sight tile) nil
           (tile-blocks-movement tile) nil)))
-
-(defun carve-room (map room)
-  (with-rect (room)
-    (iterate (for-nested ((x :from (1+ x1) :below x2)
-                          (y :from (1+ y1) :below y2)))
-      (carve-tile map x y))))
-
-(defun carve-horizontal-tunnel (map x1 x2 y)
-  (sortf x1 x2)
-  (iterate (for x :from x1 :to x2)
-           (carve-tile map x y)))
-
-(defun carve-vertical-tunnel (map x y1 y2)
-  (sortf y1 y2)
-  (iterate (for y :from y1 :to y2)
-           (carve-tile map x y)))
-
-(defun carve-tunnel (map x1 y1 x2 y2)
-  (if (randomp)
-    (progn (carve-horizontal-tunnel map x1 x2 y1)
-           (carve-vertical-tunnel map x2 y1 y2))
-    (progn (carve-vertical-tunnel map x1 y1 y2)
-           (carve-horizontal-tunnel map x1 x2 y2))))
-
-
-(defun random-room ()
-  (let* ((w (pcg:pcg-random t *room-min-size* *room-max-size* :inclusive))
-         (h (pcg:pcg-random t *room-min-size* *room-max-size* :inclusive))
-         (x (pcg:pcg-random t 0 (- *map-width* w)))
-         (y (pcg:pcg-random t 0 (- *map-height* h))))
-    (make-rect x y w h)))
-
-(defun carve-rooms (map)
-  (iterate
-    (with rooms = (list))
-    (repeat *max-rooms*)
-    (for room = (random-room))
-    (unless (some (curry #'rect-intersects-p room) rooms)
-      (carve-room map room)
-      (if (null rooms)
-        (setf (values (object-x *player*)
-                      (object-y *player*))
-              (rect-center room))
-        (multiple-value-call #'carve-tunnel map (rect-center room) (rect-center (car rooms))))
-      (push room rooms))))
 
 (defun make-blank-map ()
   (let ((map (make-array (list *map-width* *map-height*))))
@@ -162,12 +96,11 @@
     map))
 
 (defun make-map ()
-  (let ((map (make-blank-map)))
-    (carve-rooms map)
+  (let ((map (make-blank-map))
+        (bsp (rl.bsp::make-partitioning *map-width* *map-height*)))
+    (setf *bsp* bsp)
+    (rl.bsp::carve-partitioning (curry #'carve-tile map) bsp)
     map))
-
-
-(defvar *map* nil)
 
 
 (defun map-blocks-movement-p (x y)
@@ -185,8 +118,8 @@
 (defun find-wall-glyph (x y)
   (flet ((wallp (neighbor)
            (and neighbor (tile-blocks-movement neighbor))))
-    (let ((u (wallp (map-ref? x (1+ y))))
-          (d (wallp (map-ref? x (1- y))))
+    (let ((u (wallp (map-ref? x (1- y))))
+          (d (wallp (map-ref? x (1+ y))))
           (l (wallp (map-ref? (1- x) y)))
           (r (wallp (map-ref? (1+ x) y))))
       (cond
@@ -246,7 +179,7 @@
     (setf (blt:layer) layer
           (blt:color) color
           (blt:font) "tile"
-          (blt:cell-char x (- *map-height* y 1)) glyph))
+          (blt:cell-char x y) glyph))
   (values))
 
 (defun clear-object (object)
@@ -261,6 +194,11 @@
 (defvar *goblin* nil)
 (defvar *objects* nil)
 
+
+(defun place-player-initial ()
+  (setf (values (object-x *player*)
+                (object-y *player*))
+        (rl.bsp::random-room-point (random-elt (rl.bsp::flatten-partitioning *bsp*)))))
 
 ;;;; Config -------------------------------------------------------------------
 (defun config-fonts ()
@@ -316,6 +254,7 @@
 
 
 (defun initialize ()
+  (place-player-initial)
   (rebuild-map-glyphs)
   (recompute-fov))
 
@@ -369,7 +308,7 @@
   (iterate (for (tile x y) :in-array *map*)
            (for wall? = (tile-blocks-sight tile))
            (setf (blt:color) (if wall? +color-dark-wall+ +color-dark-ground+)
-                 (blt:cell-char x (- *map-height* y 1)) (tile-glyph tile))))
+                 (blt:cell-char x y) (tile-glyph tile))))
 
 (defun draw-mouse ()
   (when *show-mouse?*
@@ -377,8 +316,8 @@
           (blt:color) (blt:hsva 1.0 0.0 1.0 0.5))
     (iterate
       (for (x . y) :in-vector (line (object-x *player*) (object-y *player*)
-                                    *mouse-x* (- *map-height* *mouse-y* 1)))
-      (setf (blt:cell-char x (- *map-height* y 1)) #\full_block))
+                                    *mouse-x* *mouse-y*))
+      (setf (blt:cell-char x y) #\full_block))
     (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
           (blt:cell-char *mouse-x* *mouse-y*) #\full_block)))
 
@@ -388,7 +327,7 @@
   (iterate
     (for (visible? x y) :in-array *fov-map*)
     (when visible?
-      (setf (blt:cell-char x (- *map-height* y 1)) #\full_block))))
+      (setf (blt:cell-char x y) #\full_block))))
 
 (defun draw-status ()
   (setf (blt:color) (blt:rgba 1.0 1.0 1.0)
@@ -411,7 +350,7 @@
 
 
 (defun mouse-coords ()
-  (values *mouse-x* (- *map-height* *mouse-y* 1)))
+  (values *mouse-x* *mouse-y*))
 
 (defun mouse-tile ()
   (multiple-value-call #'aref *map* (mouse-coords)))
@@ -459,8 +398,8 @@
     (:mouse-move (update-mouse-location) t)
     (:toggle-wall (toggle-wall) t)
     (:regenerate-world (generate) t)
-    (:move-up (move-object *player* 0 1) (recompute-fov) t)
-    (:move-down (move-object *player* 0 -1) (recompute-fov) t)
+    (:move-up (move-object *player* 0 -1) (recompute-fov) t)
+    (:move-down (move-object *player* 0 1) (recompute-fov) t)
     (:move-left (move-object *player* -1 0) (recompute-fov) t)
     (:move-right (move-object *player* 1 0) (recompute-fov) t)
     (:warp-player (warp-player) t)
