@@ -57,13 +57,14 @@
 
 ;;;; Tiles --------------------------------------------------------------------
 (defclass* tile ()
-  (blocks-movement blocks-sight))
+  (blocks-movement blocks-sight glyph))
 
 
 (defun make-tile (&key blocks-movement (blocks-sight blocks-movement))
   (make-instance 'tile
     :blocks-movement blocks-movement
-    :blocks-sight blocks-sight))
+    :blocks-sight blocks-sight
+    :glyph #\.))
 
 (defun make-map ()
   (let ((map (make-array (list *map-width* *map-height*))))
@@ -71,10 +72,6 @@
       (for-nested ((x :from 0 :below *map-width*)
                    (y :from 0 :below *map-height*)))
       (setf (aref map x y) (make-tile)))
-    (setf (tile-blocks-movement (aref map 5 5)) t
-          (tile-blocks-sight (aref map 5 5)) t
-          (tile-blocks-movement (aref map 15 5)) t
-          (tile-blocks-sight (aref map 15 5)) t)
     map))
 
 
@@ -86,6 +83,45 @@
 
 (defun map-blocks-sight-p (x y)
   (tile-blocks-sight (aref *map* x y)))
+
+
+(defun map-ref? (x y)
+  (when (and (in-range-p 0 x *map-width*)
+             (in-range-p 0 y *map-height*))
+    (aref *map* x y)))
+
+(defun find-wall-glyph (x y)
+  (flet ((wallp (neighbor)
+           (and neighbor (tile-blocks-movement neighbor))))
+    (let ((u (wallp (map-ref? x (1+ y))))
+          (d (wallp (map-ref? x (1- y))))
+          (l (wallp (map-ref? (1- x) y)))
+          (r (wallp (map-ref? (1+ x) y))))
+      (cond
+        ((and u d l r) #\box_drawings_double_vertical_and_horizontal)
+        ((and   d l r) #\box_drawings_double_down_and_horizontal)
+        ((and u   l r) #\box_drawings_double_up_and_horizontal)
+        ((and u d   r) #\box_drawings_double_vertical_and_right)
+        ((and u d l  ) #\box_drawings_double_vertical_and_left)
+        ((and u d    ) #\box_drawings_double_vertical)
+        ((and     l r) #\box_drawings_double_horizontal)
+        ((and u   l  ) #\box_drawings_double_up_and_left)
+        ((and u     r) #\box_drawings_double_up_and_right)
+        ((and   d l  ) #\box_drawings_double_down_and_left)
+        ((and   d   r) #\box_drawings_double_down_and_right)
+        ((and u      ) #\box_drawings_double_vertical)
+        ((and   d    ) #\box_drawings_double_vertical)
+        ((and     l  ) #\box_drawings_double_horizontal)
+        ((and       r) #\box_drawings_double_horizontal)
+        (t             #\identical_to)))))
+
+(defun rebuild-map-glyphs ()
+  (iterate (for (tile x y) :in-array *map*)
+           (setf (tile-glyph tile)
+                 (if (and (tile-blocks-sight tile)
+                          (tile-blocks-movement tile))
+                   (find-wall-glyph x y)
+                   #\.))))
 
 
 ;;;; Game Objects -------------------------------------------------------------
@@ -104,16 +140,20 @@
 
 (defun move-object (object dx dy)
   (with-object (object)
-    (unless (map-blocks-movement-p (+ x dx) (+ y dy))
-      (incf x dx)
-      (incf y dy)))
+    (let ((tx (+ x dx))
+          (ty (+ y dy)))
+      (unless (or (not (in-range-p 0 tx *map-width*))
+                  (not (in-range-p 0 ty *map-height*))
+                  (map-blocks-movement-p tx ty))
+        (setf x tx)
+        (setf y ty))))
   (values))
 
 (defun draw-object (object)
   (with-object (object)
     (setf (blt:layer) layer
           (blt:color) color)
-    (print-tile x y glyph))
+    (print-tile x (- *map-height* y 1) glyph))
   (values))
 
 (defun clear-object (object)
@@ -123,32 +163,22 @@
   (values))
 
 
-(defparameter *player*
-  (make-object (truncate *screen-width* 2)
-               (truncate *screen-height* 2)
-               :glyph #\@
-               :layer *layer-mobs*))
-
-(defparameter *fungus*
-  (make-object 4 4
-               :glyph #\F
-               :color (blt:hsva 0.3 0.8 1.0)
-               :layer *layer-mobs*))
-
-(defparameter *goblin*
-  (make-object 2 2
-               :glyph #\g
-               :layer *layer-mobs*))
-
-(defparameter *objects* (list *player* *fungus* *goblin*))
+(defparameter *player* nil)
+(defparameter *fungus* nil)
+(defparameter *goblin* nil)
+(defparameter *objects* nil)
 
 
 ;;;; Config -------------------------------------------------------------------
 (defun config-fonts ()
-  (blt:set "font: ~A, size=16x16, align=dead-center;"
-           (asset-path "ProggySquare/ProggySquare.ttf"))
-  (blt:set "tile font: ~A, size=16x16, align=dead-center;"
-           (asset-path "ProggySquare/ProggySquare.ttf"))
+  ;; (blt:set "font: ~A, size=16x16, align=dead-center;"
+  ;;          (asset-path "ProggySquare/ProggySquare.ttf"))
+  ;; (blt:set "tile font: ~A, size=16x16, align=dead-center;"
+  ;;          (asset-path "ProggySquare/ProggySquare.ttf"))
+  (blt:set "tile font: ~A, size=16x16, codepage=437;"
+           (asset-path "df.png"))
+  (blt:set "font: ~A, size=16x16, codepage=437;"
+           (asset-path "df.png"))
   (when *enable-tiles*
     (blt:set "tile 0x0000: ~A, size=16x16, resize=16x16, align=dead-center, codepage=~A;"
              (asset-path "tiles.png")
@@ -164,6 +194,47 @@
   (setf *running* t))
 
 
+;;;; Generation ---------------------------------------------------------------
+(defun generate-player ()
+  (setf *player*
+        (make-object (truncate *screen-width* 2)
+                     (truncate *screen-height* 2)
+                     :glyph #\@
+                     :layer *layer-mobs*)))
+
+(defun generate-mobs ()
+  (setf *fungus*
+        (make-object 4 4
+                     :glyph #\F
+                     :color (blt:hsva 0.3 0.8 1.0)
+                     :layer *layer-mobs*)
+        *goblin*
+        (make-object 2 2
+                     :glyph #\g
+                     :layer *layer-mobs*)))
+
+(defun generate-objects ()
+  (generate-player)
+  (generate-mobs)
+  (setf *objects* (list *player* *fungus* *goblin*)))
+
+
+(defun generate-map ()
+  (setf *map* (make-map)))
+
+
+(defun initialize ()
+  (rebuild-map-glyphs)
+  (recompute-fov))
+
+
+(defun generate ()
+  (generate-objects)
+  (generate-map)
+  (initialize)
+  (values))
+
+
 ;;;; Vision -------------------------------------------------------------------
 (defun make-fov-map ()
   (make-array (array-dimensions *map*) :element-type 'boolean :initial-element nil))
@@ -173,7 +244,8 @@
 (defun clear-fov-map ()
   (fill-multidimensional-array *fov-map* nil))
 
-(defun in-bounds-p (x y)
+
+(defun-inline in-bounds-p (x y)
   (and (in-range-p 0 x *map-width*)
        (in-range-p 0 y *map-height*)))
 
@@ -208,7 +280,7 @@
   (iterate (for (tile x y) :in-array *map*)
            (for wall? = (tile-blocks-sight tile))
            (setf (blt:color) (if wall? +color-dark-wall+ +color-dark-ground+))
-           (print-tile x y (if wall? #\# #\.))))
+           (print-tile x (- *map-height* y 1) (tile-glyph tile))))
 
 
 (defun draw-mouse ()
@@ -217,8 +289,8 @@
           (blt:color) (blt:hsva 1.0 0.0 1.0 0.5))
     (iterate
       (for (x . y) :in-vector (line (object-x *player*) (object-y *player*)
-                                    *mouse-x* *mouse-y*))
-      (setf (blt:cell-char x y) #\full_block))
+                                    *mouse-x* (- *map-height* *mouse-y* 1)))
+      (setf (blt:cell-char x (- *map-height* y 1)) #\full_block))
     (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
           (blt:cell-char *mouse-x* *mouse-y*) #\full_block)))
 
@@ -233,31 +305,29 @@
   (iterate
     (for (visible? x y) :in-array *fov-map*)
     (when visible?
-      (setf (blt:cell-char x y) #\full_block))))
+      (setf (blt:cell-char x (- *map-height* y 1)) #\full_block))))
 
 (defun clear-fov ()
   (blt:clear-layer *layer-fov*))
 
 (defun draw ()
+  (blt:clear)
   (draw-map)
   (draw-objects)
   (draw-mouse)
   (draw-fov)
-  (blt:refresh)
-  (clear-objects)
-  (clear-mouse)
-  (clear-fov))
+  (blt:refresh))
 
 
 ;;;; Input --------------------------------------------------------------------
 (defun update-mouse-location ()
-  (when *show-mouse?*
-    (setf (values *mouse-x* *mouse-y*) (blt:mouse))))
+  (setf (values *mouse-x* *mouse-y*) (blt:mouse)))
 
 (defun toggle-wall ()
-  (let ((tile (aref *map* *mouse-x* *mouse-y*)))
+  (let ((tile (aref *map* *mouse-x* (- *map-height* *mouse-y* 1))))
     (notf (tile-blocks-movement tile))
-    (notf (tile-blocks-sight tile))))
+    (notf (tile-blocks-sight tile))
+    (rebuild-map-glyphs)))
 
 
 (defun read-event ()
@@ -266,7 +336,7 @@
       (:f1 :refresh-config)
       (:f2 :flip-tiles)
       (:f3 :flip-mouse)
-      (:f4 :recompute-fov)
+      (:f4 :regenerate-world)
 
       (:up :move-up)
       (:down :move-down)
@@ -282,16 +352,16 @@
 
 (defun handle-event (event)
   (ecase event
-    (:refresh-config (config))
-    (:flip-tiles (notf *enable-tiles*) (config))
-    (:flip-mouse (notf *show-mouse?*) (update-mouse-location))
-    (:mouse-move (update-mouse-location))
-    (:toggle-wall (toggle-wall))
-    (:recompute-fov (recompute-fov))
-    (:move-up (move-object *player* 0 -1))
-    (:move-down (move-object *player* 0 1))
-    (:move-left (move-object *player* -1 0))
-    (:move-right (move-object *player* 1 0))
+    (:refresh-config (config) t)
+    (:flip-tiles (notf *enable-tiles*) (config) t)
+    (:flip-mouse (notf *show-mouse?*) (update-mouse-location) t)
+    (:mouse-move (update-mouse-location) t)
+    (:toggle-wall (toggle-wall) (recompute-fov) t)
+    (:regenerate-world (generate) t)
+    (:move-up (move-object *player* 0 1) (recompute-fov) t)
+    (:move-down (move-object *player* 0 -1) (recompute-fov) t)
+    (:move-left (move-object *player* -1 0) (recompute-fov) t)
+    (:move-right (move-object *player* 1 0) (recompute-fov) t)
     (:quit (setf *running* nil))))
 
 (defun handle-events ()
@@ -299,16 +369,22 @@
     (for event = (read-event))
     (until (eql event :done))
     (when event
-      (handle-event event))))
+      (oring (handle-event event)))))
 
 
 ;;;; Main Loop ----------------------------------------------------------------
 (defun run ()
   (blt:with-terminal
     (config)
-    (iterate (while *running*)
-             (draw)
-             (handle-events))))
+    (generate)
+    (blt:clear)
+    (iterate
+      (while *running*)
+      (if skip-draw
+        (sleep 1/60)
+        (draw))
+      (for had-events = (handle-events))
+      (for skip-draw = (not had-events)))))
 
 
 ;;;; Entry --------------------------------------------------------------------

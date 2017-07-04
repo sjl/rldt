@@ -3,6 +3,12 @@
 ;;;; Lippert ------------------------------------------------------------------
 ;;; https://blogs.msdn.microsoft.com/ericlippert/2011/12/12/shadowcasting-in-c-part-one/
 
+(deftype opaque-map ()
+  '(simple-array boolean (* *)))
+
+(deftype visibility-map ()
+  '(simple-array boolean (* *)))
+
 (deftype coordinate ()
   '(integer 0 65000))
 
@@ -15,7 +21,7 @@
   (y (required) :type coordinate))
 
 (defstruct (column-portion (:constructor make-column-portion (x top bottom)))
-  (x (required) :type fixnum)
+  (x (required) :type positive-coordinate)
   (top (required) :type direction-vector)
   (bottom (required) :type direction-vector))
 
@@ -75,7 +81,6 @@
       (if (< remainder x)
         quotient
         (1+ quotient)))))
-
 
 (defun translate-function-origin (function x y)
   (lambda (x% y%)
@@ -146,3 +151,97 @@
     (compute-fov-in-octant-zero radius
                                 (translate-function-octant opaquep% octant)
                                 (translate-function-octant mark-visible% octant))))
+
+
+
+;;;;
+
+(defun translate-octant (octant ox oy x y)
+  (declare (type (integer -65000 65000) ox oy x y)
+           (optimize speed))
+  (multiple-value-bind (dx dy)
+      (ecase octant
+        (0 (values x y))
+        (1 (values y x))
+        (2 (values (- y) x))
+        (3 (values (- x) y))
+        (4 (values (- x) (- y)))
+        (5 (values (- y) (- x)))
+        (6 (values y (- x)))
+        (7 (values x (- y))))
+    (values (+ ox dx) (+ oy dy))))
+
+(defun col-ok (octant x y w h)
+  (declare (type (integer -65000 65000) x y w h)
+           (optimize speed))
+  (ecase octant
+    ((0 7) (< x w))
+    ((1 2) (>= y 0))
+    ((3 4) (>= x 0))
+    ((5 6) (< y h))))
+
+(defun row-ok (octant x y w h)
+  (declare (type (integer -65000 65000) x y w h)
+           (optimize speed))
+  (ecase octant
+    ((0 3) (>= y 0))
+    ((1 6) (< x w))
+    ((2 5) (>= x 0))
+    ((4 7) (< y h))))
+
+
+
+(defun compute-fov-for-column-portion%
+    (octant ox oy radius queue x top bottom opaquep mark-visible)
+  (iterate
+    (for y
+         :from (topmost-visible-cell x top)
+         :downto (bottommost-visible-cell x bottom))
+
+    (for (values x% y%) = (translate-octant octant ox oy x y))
+
+    ;; (when (not (col-ok octant x% y% 20 20)) (return))
+    ;; (when (not (row-ok octant x% y% 20 20)) (next-iteration))
+
+    ;; (for in-bounds? = (and (in-range-p 0 x% 25)
+    ;;                        (in-range-p 0 y% 25)))
+    (for in-radius? = (in-radius-p x y radius))
+    (for opaque? = (or (not in-radius?) (funcall opaquep x% y%)))
+    (for prev-opaque? :previous opaque?)
+
+    (when in-radius?
+      (funcall mark-visible x% y%))
+
+    (if-first-time
+      nil
+      (cond
+        ((and opaque? (not prev-opaque?))
+         ;; transparent -> opaque
+         (enqueue (make-column-portion (1+ x)
+                                       top
+                                       (make-upper-left-direction-vector x y))
+                  queue))
+        ((and (not opaque?) prev-opaque?)
+         ;; opaque -> transparent
+         (setf top (make-lower-right-direction-vector x y)))))
+    (finally
+      (when (not opaque?)
+        (enqueue (make-column-portion (1+ x) top bottom)
+                 queue)))))
+
+
+(defun compute-fov-in-octant (octant x y radius opaquep mark-visible)
+  (funcall mark-visible x y)
+  (doqueue (queue (make-column-portion 1
+                                       (make-direction-vector 1 1)
+                                       (make-direction-vector 1 0)))
+    (with-column-portion ((dequeue queue) cx top bottom)
+      (unless (>= cx radius)
+        (compute-fov-for-column-portion% octant x y radius queue cx top bottom
+                                        opaquep mark-visible)))))
+
+
+(defun compute-fov (x y radius opaquep mark-visible)
+  (iterate
+    (for octant :from 0 :to 7)
+    (compute-fov-in-octant octant x y radius opaquep mark-visible)))
