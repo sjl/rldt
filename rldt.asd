@@ -16,4 +16,5 @@
                (:file "package")
                (:module "src" :serial t
                 :components
-                ((:file "main")))))
+                ((:file "field-of-view")
+                 (:file "main")))))

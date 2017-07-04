@@ -34,6 +34,13 @@
 (defun asset-path (filename)
   (concatenate 'string *assets-directory* filename))
 
+(defmacro sortf (place-1 place-2 &key (key ''<))
+  (with-gensyms (value-1 value-2)
+    `(let ((,value-1 ,place-1)
+           (,value-2 ,place-2))
+       (when (funcall ,key ,value-2 ,value-1)
+         (rotatef ,place-1 ,place-2)))))
+
 
 ;;;; Lines --------------------------------------------------------------------
 (defun-inline distance (x1 y1 x2 y2)
@@ -66,12 +73,53 @@
     :blocks-sight blocks-sight
     :glyph #\.))
 
+(defun make-wall ()
+  (make-tile :blocks-movement t :blocks-sight t))
+
+
+(defstruct (rect (:constructor make-rect%))
+  x1 y1 x2 y2)
+
+(define-with-macro rect x1 y1 x2 y2)
+
+(defun make-rect (x y w h)
+  (make-rect% :x1 x
+              :y1 y
+              :x2 (+ x w -1)
+              :y2 (+ y h -1)))
+
+
+(defun carve-tile (map x y)
+  (let ((tile (aref map x y)))
+    (setf (tile-blocks-sight tile) nil
+          (tile-blocks-movement tile) nil)))
+
+(defun carve-room (map room)
+  (with-rect (room)
+    (iterate (for-nested ((x :from (1+ x1) :below x2)
+                          (y :from (1+ y1) :below y2)))
+      (carve-tile map x y))))
+
+(defun carve-horizontal-tunnel (map x1 x2 y)
+  (sortf x1 x2)
+  (iterate (for x :from x1 :to x2)
+           (carve-tile map x y)))
+
+(defun carve-vertical-tunnel (map x y1 y2)
+  (sortf y1 y2)
+  (iterate (for y :from y1 :to y2)
+           (carve-tile map x y)))
+
+
 (defun make-map ()
   (let ((map (make-array (list *map-width* *map-height*))))
     (iterate
       (for-nested ((x :from 0 :below *map-width*)
                    (y :from 0 :below *map-height*)))
-      (setf (aref map x y) (make-tile)))
+      (setf (aref map x y) (make-wall)))
+    (carve-room map (make-rect 10 10 6 10))
+    (carve-room map (make-rect 30 10 5 5))
+    (carve-horizontal-tunnel map 11 31 13)
     map))
 
 
@@ -323,11 +371,25 @@
 (defun update-mouse-location ()
   (setf (values *mouse-x* *mouse-y*) (blt:mouse)))
 
+
+(defun mouse-coords ()
+  (values *mouse-x* (- *map-height* *mouse-y* 1)))
+
+(defun mouse-tile ()
+  (multiple-value-call #'aref *map* (mouse-coords)))
+
 (defun toggle-wall ()
-  (let ((tile (aref *map* *mouse-x* (- *map-height* *mouse-y* 1))))
+  (let ((tile (mouse-tile)))
     (notf (tile-blocks-movement tile))
     (notf (tile-blocks-sight tile))
+    (recompute-fov)
     (rebuild-map-glyphs)))
+
+(defun warp-player ()
+  (multiple-value-bind (x y) (mouse-coords)
+    (setf (object-x *player*) x
+          (object-y *player*) y))
+  (recompute-fov))
 
 
 (defun read-event ()
@@ -345,6 +407,7 @@
 
       (:mouse-move :mouse-move)
       (:mouse-left :toggle-wall)
+      (:mouse-right :warp-player)
 
       (:escape :quit)
       (:close :quit))
@@ -356,12 +419,13 @@
     (:flip-tiles (notf *enable-tiles*) (config) t)
     (:flip-mouse (notf *show-mouse?*) (update-mouse-location) t)
     (:mouse-move (update-mouse-location) t)
-    (:toggle-wall (toggle-wall) (recompute-fov) t)
+    (:toggle-wall (toggle-wall) t)
     (:regenerate-world (generate) t)
     (:move-up (move-object *player* 0 1) (recompute-fov) t)
     (:move-down (move-object *player* 0 -1) (recompute-fov) t)
     (:move-left (move-object *player* -1 0) (recompute-fov) t)
     (:move-right (move-object *player* 1 0) (recompute-fov) t)
+    (:warp-player (warp-player) t)
     (:quit (setf *running* nil))))
 
 (defun handle-events ()
