@@ -5,6 +5,8 @@
   :utilities '(
 
                :with-gensyms
+               :curry
+               :rcurry
 
                )
   :package "RL.QUICKUTILS")

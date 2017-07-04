@@ -2,7 +2,7 @@
 ;;;; See http://quickutil.org for details.
 
 ;;;; To regenerate:
-;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:WITH-GENSYMS) :ensure-package T :package "RL.QUICKUTILS")
+;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:WITH-GENSYMS :CURRY :RCURRY) :ensure-package T :package "RL.QUICKUTILS")
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (find-package "RL.QUICKUTILS")
@@ -13,7 +13,9 @@
 (in-package "RL.QUICKUTILS")
 
 (when (boundp '*utilities*)
-  (setf *utilities* (union *utilities* '(:STRING-DESIGNATOR :WITH-GENSYMS))))
+  (setf *utilities* (union *utilities* '(:STRING-DESIGNATOR :WITH-GENSYMS
+                                         :MAKE-GENSYM-LIST :ENSURE-FUNCTION
+                                         :CURRY :RCURRY))))
 
   (deftype string-designator ()
     "A string designator type. A string designator is either a string, a symbol,
@@ -59,6 +61,59 @@ unique symbol the named variable will be bound to."
     `(with-gensyms ,names ,@forms))
   
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (export '(with-gensyms with-unique-names)))
+  (defun make-gensym-list (length &optional (x "G"))
+    "Returns a list of `length` gensyms, each generated as if with a call to `make-gensym`,
+using the second (optional, defaulting to `\"G\"`) argument."
+    (let ((g (if (typep x '(integer 0)) x (string x))))
+      (loop repeat length
+            collect (gensym g))))
+  )                                        ; eval-when
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  ;;; To propagate return type and allow the compiler to eliminate the IF when
+  ;;; it is known if the argument is function or not.
+  (declaim (inline ensure-function))
+
+  (declaim (ftype (function (t) (values function &optional))
+                  ensure-function))
+  (defun ensure-function (function-designator)
+    "Returns the function designated by `function-designator`:
+if `function-designator` is a function, it is returned, otherwise
+it must be a function name and its `fdefinition` is returned."
+    (if (functionp function-designator)
+        function-designator
+        (fdefinition function-designator)))
+  )                                        ; eval-when
+
+  (defun curry (function &rest arguments)
+    "Returns a function that applies `arguments` and the arguments
+it is called with to `function`."
+    (declare (optimize (speed 3) (safety 1) (debug 1)))
+    (let ((fn (ensure-function function)))
+      (lambda (&rest more)
+        (declare (dynamic-extent more))
+        ;; Using M-V-C we don't need to append the arguments.
+        (multiple-value-call fn (values-list arguments) (values-list more)))))
+
+  (define-compiler-macro curry (function &rest arguments)
+    (let ((curries (make-gensym-list (length arguments) "CURRY"))
+          (fun (gensym "FUN")))
+      `(let ((,fun (ensure-function ,function))
+             ,@(mapcar #'list curries arguments))
+         (declare (optimize (speed 3) (safety 1) (debug 1)))
+         (lambda (&rest more)
+           (apply ,fun ,@curries more)))))
+  
+
+  (defun rcurry (function &rest arguments)
+    "Returns a function that applies the arguments it is called
+with and `arguments` to `function`."
+    (declare (optimize (speed 3) (safety 1) (debug 1)))
+    (let ((fn (ensure-function function)))
+      (lambda (&rest more)
+        (declare (dynamic-extent more))
+        (multiple-value-call fn (values-list more) (values-list arguments)))))
+  
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (export '(with-gensyms with-unique-names curry rcurry)))
 
 ;;;; END OF quickutils.lisp ;;;;

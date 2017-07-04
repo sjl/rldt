@@ -17,20 +17,20 @@
 (defparameter *layer-fov* 9)
 (defparameter *layer-mouse* 10)
 
-(defparameter *mouse-x* 0)
-(defparameter *mouse-y* 0)
+(defvar *mouse-x* 0)
+(defvar *mouse-y* 0)
 
-(defparameter *enable-tiles* nil)
-(defparameter *show-mouse?* t)
+(defvar *enable-tiles* nil)
+(defvar *show-mouse?* t)
 
 (defparameter *assets-directory* "./assets/")
 
+(defparameter *room-max-size* 10)
+(defparameter *room-min-size* 6)
+(defparameter *max-rooms* 10)
+
 
 ;;;; Utils --------------------------------------------------------------------
-(defun print-tile (x y glyph)
-  ;; todo: replace with (blt:font) for the next version of blt
-  (blt:print x y (format nil "[font=tile]~A" glyph)))
-
 (defun asset-path (filename)
   (concatenate 'string *assets-directory* filename))
 
@@ -77,6 +77,7 @@
   (make-tile :blocks-movement t :blocks-sight t))
 
 
+;;;; Map ----------------------------------------------------------------------
 (defstruct (rect (:constructor make-rect%))
   x1 y1 x2 y2)
 
@@ -87,6 +88,19 @@
               :y1 y
               :x2 (+ x w -1)
               :y2 (+ y h -1)))
+
+(defun rect-center (rect)
+  (with-rect (rect)
+    (values (truncate (+ x1 x2) 2)
+            (truncate (+ y1 y2) 2))))
+
+(defun rect-intersects-p (rect-a rect-b)
+  (with-rect (rect-a ax1 ay1 ax2 ay2)
+    (with-rect (rect-b bx1 by1 bx2 by2)
+      (and (<= ax1 bx2)
+           (>= ax2 bx1)
+           (<= ay1 by2)
+           (>= ay2 by1)))))
 
 
 (defun carve-tile (map x y)
@@ -110,20 +124,50 @@
   (iterate (for y :from y1 :to y2)
            (carve-tile map x y)))
 
+(defun carve-tunnel (map x1 y1 x2 y2)
+  (if (randomp)
+    (progn (carve-horizontal-tunnel map x1 x2 y1)
+           (carve-vertical-tunnel map x2 y1 y2))
+    (progn (carve-vertical-tunnel map x1 y1 y2)
+           (carve-horizontal-tunnel map x1 x2 y2))))
 
-(defun make-map ()
+
+(defun random-room ()
+  (let* ((w (pcg:pcg-random t *room-min-size* *room-max-size* :inclusive))
+         (h (pcg:pcg-random t *room-min-size* *room-max-size* :inclusive))
+         (x (pcg:pcg-random t 0 (- *map-width* w)))
+         (y (pcg:pcg-random t 0 (- *map-height* h))))
+    (make-rect x y w h)))
+
+(defun carve-rooms (map)
+  (iterate
+    (with rooms = (list))
+    (repeat *max-rooms*)
+    (for room = (random-room))
+    (unless (some (curry #'rect-intersects-p room) rooms)
+      (carve-room map room)
+      (if (null rooms)
+        (setf (values (object-x *player*)
+                      (object-y *player*))
+              (rect-center room))
+        (multiple-value-call #'carve-tunnel map (rect-center room) (rect-center (car rooms))))
+      (push room rooms))))
+
+(defun make-blank-map ()
   (let ((map (make-array (list *map-width* *map-height*))))
     (iterate
       (for-nested ((x :from 0 :below *map-width*)
                    (y :from 0 :below *map-height*)))
       (setf (aref map x y) (make-wall)))
-    (carve-room map (make-rect 10 10 6 10))
-    (carve-room map (make-rect 30 10 5 5))
-    (carve-horizontal-tunnel map 11 31 13)
+    map))
+
+(defun make-map ()
+  (let ((map (make-blank-map)))
+    (carve-rooms map)
     map))
 
 
-(defparameter *map* (make-map))
+(defvar *map* nil)
 
 
 (defun map-blocks-movement-p (x y)
@@ -200,8 +244,9 @@
 (defun draw-object (object)
   (with-object (object)
     (setf (blt:layer) layer
-          (blt:color) color)
-    (print-tile x (- *map-height* y 1) glyph))
+          (blt:color) color
+          (blt:font) "tile"
+          (blt:cell-char x (- *map-height* y 1)) glyph))
   (values))
 
 (defun clear-object (object)
@@ -211,21 +256,19 @@
   (values))
 
 
-(defparameter *player* nil)
-(defparameter *fungus* nil)
-(defparameter *goblin* nil)
-(defparameter *objects* nil)
+(defvar *player* nil)
+(defvar *fungus* nil)
+(defvar *goblin* nil)
+(defvar *objects* nil)
 
 
 ;;;; Config -------------------------------------------------------------------
 (defun config-fonts ()
-  ;; (blt:set "font: ~A, size=16x16, align=dead-center;"
-  ;;          (asset-path "ProggySquare/ProggySquare.ttf"))
+  (blt:set "font: ~A, size=16x16;"
+           (asset-path "ProggySquare/ProggySquare.ttf"))
   ;; (blt:set "tile font: ~A, size=16x16, align=dead-center;"
   ;;          (asset-path "ProggySquare/ProggySquare.ttf"))
   (blt:set "tile font: ~A, size=16x16, codepage=437;"
-           (asset-path "df.png"))
-  (blt:set "font: ~A, size=16x16, codepage=437;"
            (asset-path "df.png"))
   (when *enable-tiles*
     (blt:set "tile 0x0000: ~A, size=16x16, resize=16x16, align=dead-center, codepage=~A;"
@@ -268,7 +311,8 @@
 
 
 (defun generate-map ()
-  (setf *map* (make-map)))
+  (setf *map* (make-map)
+        *fov-map* (make-fov-map)))
 
 
 (defun initialize ()
@@ -287,7 +331,7 @@
 (defun make-fov-map ()
   (make-array (array-dimensions *map*) :element-type 'boolean :initial-element nil))
 
-(defparameter *fov-map* (make-fov-map))
+(defvar *fov-map* nil)
 
 (defun clear-fov-map ()
   (fill-multidimensional-array *fov-map* nil))
@@ -319,17 +363,13 @@
 (defun draw-objects ()
   (map nil #'draw-object *objects*))
 
-(defun clear-objects ()
-  (map nil #'clear-object *objects*))
-
-
 (defun draw-map ()
-  (setf (blt:layer) *layer-bg*)
+  (setf (blt:layer) *layer-bg*
+        (blt:font) "tile")
   (iterate (for (tile x y) :in-array *map*)
            (for wall? = (tile-blocks-sight tile))
-           (setf (blt:color) (if wall? +color-dark-wall+ +color-dark-ground+))
-           (print-tile x (- *map-height* y 1) (tile-glyph tile))))
-
+           (setf (blt:color) (if wall? +color-dark-wall+ +color-dark-ground+)
+                 (blt:cell-char x (- *map-height* y 1)) (tile-glyph tile))))
 
 (defun draw-mouse ()
   (when *show-mouse?*
@@ -342,11 +382,6 @@
     (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
           (blt:cell-char *mouse-x* *mouse-y*) #\full_block)))
 
-(defun clear-mouse ()
-  (when *show-mouse?*
-    (blt:clear-layer *layer-mouse*)))
-
-
 (defun draw-fov ()
   (setf (blt:layer) *layer-fov*
         (blt:color) (blt:hsva 0.3 0.3 1.0 0.3))
@@ -355,8 +390,10 @@
     (when visible?
       (setf (blt:cell-char x (- *map-height* y 1)) #\full_block))))
 
-(defun clear-fov ()
-  (blt:clear-layer *layer-fov*))
+(defun draw-status ()
+  (setf (blt:color) (blt:rgba 1.0 1.0 1.0)
+        (blt:font) nil)
+  (blt:print 0 (1- *screen-height*) "Hello."))
 
 (defun draw ()
   (blt:clear)
@@ -364,6 +401,7 @@
   (draw-objects)
   (draw-mouse)
   (draw-fov)
+  (draw-status)
   (blt:refresh))
 
 
