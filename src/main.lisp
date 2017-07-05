@@ -3,11 +3,12 @@
 ;;;; Parameters ---------------------------------------------------------------
 (defvar *running* t)
 
-(defparameter *screen-width* 40)
-(defparameter *screen-height* 40)
+(defparameter *screen-width* 80)
+(defparameter *screen-height* 60)
+(defparameter *cell-size* 16)
 
-(defparameter *map-width* 40)
-(defparameter *map-height* 35)
+(defparameter *map-width* *screen-width*)
+(defparameter *map-height* (- *screen-height* 5))
 
 (defconstant +color-dark-wall+ (blt:hsva 1.0 0.0 0.7))
 (defconstant +color-dark-ground+ (blt:hsva 1.0 0.0 0.5))
@@ -24,10 +25,6 @@
 (defvar *show-mouse?* t)
 
 (defparameter *assets-directory* "./assets/")
-
-(defparameter *room-max-size* 10)
-(defparameter *room-min-size* 6)
-(defparameter *max-rooms* 10)
 
 
 ;;;; Utils --------------------------------------------------------------------
@@ -202,21 +199,22 @@
 
 ;;;; Config -------------------------------------------------------------------
 (defun config-fonts ()
-  (blt:set "font: ~A, size=16x16;"
-           (asset-path "ProggySquare/ProggySquare.ttf"))
-  ;; (blt:set "tile font: ~A, size=16x16, align=dead-center;"
-  ;;          (asset-path "ProggySquare/ProggySquare.ttf"))
-  (blt:set "tile font: ~A, size=16x16, codepage=437;"
-           (asset-path "df.png"))
+  (blt:set "font: ~A, size=~Dx~:*~D;"
+           (asset-path "ProggySquare/ProggySquare.ttf")
+           *cell-size*)
+  (blt:set "tile font: ~A, size=16x16, resize=~Dx~:*~D, codepage=437;"
+           (asset-path "df.png")
+           *cell-size*)
   (when *enable-tiles*
-    (blt:set "tile 0x0000: ~A, size=16x16, resize=16x16, align=dead-center, codepage=~A;"
+    (blt:set "tile 0x0000: ~A, size=16x16, resize=~Dx~:*~D, align=dead-center, codepage=~A;"
              (asset-path "tiles.png")
+             *cell-size*
              (asset-path "codepage.txt"))))
 
 (defun config ()
   (blt:set (format nil "window.size = ~Dx~D" *screen-width* *screen-height*))
   (blt:set "window.title = /r/roguelikedev")
-  (blt:set "window.cellsize = 16x16")
+  (blt:set "window.cellsize = ~Dx~:*~D" *cell-size*)
   (blt:set "output.vsync = true")
   (blt:set "input.filter = keyboard, mouse")
   (config-fonts)
