@@ -70,8 +70,8 @@
 ;;;; Carving ------------------------------------------------------------------
 (defun carve-room (carve area)
   (with-area (area)
-    (iterate (for-nested ((x% :from (1+ x) :below (+ x w -2))
-                          (y% :from (1+ y) :below (+ y h -2))))
+    (dorange ((x% (1+ x) (+ x w -2))
+              (y% (1+ y) (+ y h -2)))
       (funcall carve x% y%))))
 
 (defun carve-horizontal-tunnel (carve x1 x2 y)

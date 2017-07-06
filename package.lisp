@@ -1,8 +1,19 @@
+(defpackage :rl.utils
+  (:use
+    :cl
+    :iterate
+    :losh
+    :rl.quickutils)
+  (:export
+    :dorange
+    :sortf))
+
 (defpackage :rl
   (:use
     :cl
     :iterate
     :losh
+    :rl.utils
     :rl.quickutils)
   (:export
     :run
@@ -14,6 +25,7 @@
     :cl
     :iterate
     :losh
+    :rl.utils
     :rl.quickutils)
   (:export
     ))

@@ -27,18 +27,6 @@
 (defparameter *assets-directory* "./assets/")
 
 
-;;;; Utils --------------------------------------------------------------------
-(defun asset-path (filename)
-  (concatenate 'string *assets-directory* filename))
-
-(defmacro dorange (ranges &body body)
-  (if (null ranges)
-    `(progn ,@body)
-    (destructuring-bind (var from below) (first ranges)
-      `(loop :for ,var :from ,from :below ,below
-             :do (dorange ,(rest ranges) ,@body)))))
-
-
 ;;;; Lines --------------------------------------------------------------------
 (defun-inline distance (x1 y1 x2 y2)
   (max (abs (- x1 x2))
@@ -180,6 +168,10 @@
 
 
 ;;;; Config -------------------------------------------------------------------
+(defun asset-path (filename)
+  (concatenate 'string *assets-directory* filename))
+
+
 (defun config-fonts ()
   (blt:set "font: ~A, size=~Dx~:*~D;"
            (asset-path "ProggySquare/ProggySquare.ttf")
