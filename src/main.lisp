@@ -31,12 +31,12 @@
 (defun asset-path (filename)
   (concatenate 'string *assets-directory* filename))
 
-(defmacro sortf (place-1 place-2 &key (key ''<))
-  (with-gensyms (value-1 value-2)
-    `(let ((,value-1 ,place-1)
-           (,value-2 ,place-2))
-       (when (funcall ,key ,value-2 ,value-1)
-         (rotatef ,place-1 ,place-2)))))
+(defmacro dorange (ranges &body body)
+  (if (null ranges)
+    `(progn ,@body)
+    (destructuring-bind (var from below) (first ranges)
+      `(loop :for ,var :from ,from :below ,below
+             :do (dorange ,(rest ranges) ,@body)))))
 
 
 ;;;; Lines --------------------------------------------------------------------
@@ -60,18 +60,11 @@
 
 
 ;;;; Tiles --------------------------------------------------------------------
-(defclass* tile ()
-  (blocks-movement blocks-sight glyph))
-
-
-(defun make-tile (&key blocks-movement (blocks-sight blocks-movement))
-  (make-instance 'tile
-    :blocks-movement blocks-movement
-    :blocks-sight blocks-sight
-    :glyph #\.))
+(defclass* wall ()
+  ((glyph :initform #\#)))
 
 (defun make-wall ()
-  (make-tile :blocks-movement t :blocks-sight t))
+  (make-instance 'wall))
 
 
 ;;;; Map ----------------------------------------------------------------------
@@ -80,15 +73,12 @@
 
 
 (defun carve-tile (map x y)
-  (let ((tile (aref map x y)))
-    (setf (tile-blocks-sight tile) nil
-          (tile-blocks-movement tile) nil)))
+  (setf (aref map x y) nil))
 
 (defun make-blank-map ()
   (let ((map (make-array (list *map-width* *map-height*))))
-    (iterate
-      (for-nested ((x :from 0 :below *map-width*)
-                   (y :from 0 :below *map-height*)))
+    (dorange ((x 0 *map-width*)
+              (y 0 *map-height*))
       (setf (aref map x y) (make-wall)))
     map))
 
@@ -100,13 +90,6 @@
     map))
 
 
-(defun map-blocks-movement-p (x y)
-  (tile-blocks-movement (aref *map* x y)))
-
-(defun map-blocks-sight-p (x y)
-  (tile-blocks-sight (aref *map* x y)))
-
-
 (defun map-ref? (x y)
   (when (and (in-range-p 0 x *map-width*)
              (in-range-p 0 y *map-height*))
@@ -114,7 +97,7 @@
 
 (defun find-wall-glyph (x y)
   (flet ((wallp (neighbor)
-           (and neighbor (tile-blocks-movement neighbor))))
+           (and neighbor (typep neighbor 'wall))))
     (let ((u (wallp (map-ref? x (1- y))))
           (d (wallp (map-ref? x (1+ y))))
           (l (wallp (map-ref? (1- x) y)))
@@ -139,11 +122,9 @@
 
 (defun rebuild-map-glyphs ()
   (iterate (for (tile x y) :in-array *map*)
-           (setf (tile-glyph tile)
-                 (if (and (tile-blocks-sight tile)
-                          (tile-blocks-movement tile))
-                   (find-wall-glyph x y)
-                   #\.))))
+           (when tile
+             (setf (wall-glyph tile)
+                   (find-wall-glyph x y)))))
 
 
 ;;;; Game Objects -------------------------------------------------------------
@@ -166,7 +147,7 @@
           (ty (+ y dy)))
       (unless (or (not (in-range-p 0 tx *map-width*))
                   (not (in-range-p 0 ty *map-height*))
-                  (map-blocks-movement-p tx ty))
+                  (aref *map* tx ty))
         (setf x tx)
         (setf y ty))))
   (values))
@@ -196,6 +177,7 @@
   (setf (values (object-x *player*)
                 (object-y *player*))
         (rl.bsp::random-room-point (random-elt (rl.bsp::flatten-partitioning *bsp*)))))
+
 
 ;;;; Config -------------------------------------------------------------------
 (defun config-fonts ()
@@ -279,9 +261,8 @@
        (in-range-p 0 y *map-height*)))
 
 (defun opaquep (x y)
-  (if (in-bounds-p x y)
-    (map-blocks-sight-p x y)
-    nil))
+  (and (in-bounds-p x y)
+       (aref *map* x y)))
 
 (defun mark-visible (x y)
   (when (in-bounds-p x y)
@@ -304,9 +285,11 @@
   (setf (blt:layer) *layer-bg*
         (blt:font) "tile")
   (iterate (for (tile x y) :in-array *map*)
-           (for wall? = (tile-blocks-sight tile))
-           (setf (blt:color) (if wall? +color-dark-wall+ +color-dark-ground+)
-                 (blt:cell-char x y) (tile-glyph tile))))
+           (etypecase tile
+             (wall (setf (blt:color) +color-dark-wall+
+                         (blt:cell-char x y) (wall-glyph tile)))
+             (null (setf (blt:color) +color-dark-ground+
+                         (blt:cell-char x y) #\.)))))
 
 (defun draw-mouse ()
   (when *show-mouse?*
@@ -354,11 +337,13 @@
   (multiple-value-call #'aref *map* (mouse-coords)))
 
 (defun toggle-wall ()
-  (let ((tile (mouse-tile)))
-    (notf (tile-blocks-movement tile))
-    (notf (tile-blocks-sight tile))
-    (recompute-fov)
-    (rebuild-map-glyphs)))
+  (multiple-value-bind (x y) (mouse-coords)
+    (setf (aref *map* x y)
+          (if (aref *map* x y)
+            nil
+            (make-wall))))
+  (recompute-fov)
+  (rebuild-map-glyphs))
 
 (defun warp-player ()
   (multiple-value-bind (x y) (mouse-coords)
