@@ -10,8 +10,10 @@
 (defparameter *map-width* *screen-width*)
 (defparameter *map-height* (- *screen-height* 5))
 
-(defconstant +color-dark-wall+ (blt:hsva 1.0 0.0 0.7))
-(defconstant +color-dark-ground+ (blt:hsva 1.0 0.0 0.5))
+(defconstant +color-light-wall+ (blt:hsva 1.0 0.0 0.7))
+(defconstant +color-light-ground+ (blt:hsva 1.0 0.0 0.5))
+(defconstant +color-dark-wall+ (blt:hsva 1.0 0.0 0.4))
+(defconstant +color-dark-ground+ (blt:hsva 1.0 0.0 0.3))
 
 (defparameter *layer-bg* 0)
 (defparameter *layer-mobs* 1)
@@ -48,11 +50,32 @@
 
 
 ;;;; Tiles --------------------------------------------------------------------
-(defclass* wall ()
-  ((glyph :initform #\#)))
+(defclass* tile ()
+  ((glyph :initform #\? :type character)
+   (seen :initform nil :type boolean)))
+
+(defclass* ground (tile)
+  ())
+
+(defclass* wall (tile)
+  ())
 
 (defun make-wall ()
-  (make-instance 'wall))
+  (make-instance 'wall :glyph #\#))
+
+(defun make-ground ()
+  (make-instance 'ground :glyph #\.))
+
+
+(defun tile-blocks-movement-p (tile)
+  (etypecase tile
+    (wall t)
+    (ground nil)))
+
+(defun tile-blocks-sight-p (tile)
+  (etypecase tile
+    (wall t)
+    (ground nil)))
 
 
 ;;;; Map ----------------------------------------------------------------------
@@ -61,7 +84,7 @@
 
 
 (defun carve-tile (map x y)
-  (setf (aref map x y) nil))
+  (setf (aref map x y) (make-ground)))
 
 (defun make-blank-map ()
   (let ((map (make-array (list *map-width* *map-height*))))
@@ -85,7 +108,7 @@
 
 (defun find-wall-glyph (x y)
   (flet ((wallp (neighbor)
-           (and neighbor (typep neighbor 'wall))))
+           (typep neighbor 'wall)))
     (let ((u (wallp (map-ref? x (1- y))))
           (d (wallp (map-ref? x (1+ y))))
           (l (wallp (map-ref? (1- x) y)))
@@ -110,8 +133,8 @@
 
 (defun rebuild-map-glyphs ()
   (iterate (for (tile x y) :in-array *map*)
-           (when tile
-             (setf (wall-glyph tile)
+           (when (typep tile 'wall)
+             (setf (tile-glyph tile)
                    (find-wall-glyph x y)))))
 
 
@@ -135,7 +158,7 @@
           (ty (+ y dy)))
       (unless (or (not (in-range-p 0 tx *map-width*))
                   (not (in-range-p 0 ty *map-height*))
-                  (aref *map* tx ty))
+                  (tile-blocks-movement-p (aref *map* tx ty)))
         (setf x tx)
         (setf y ty))))
   (values))
@@ -254,7 +277,7 @@
 
 (defun opaquep (x y)
   (and (in-bounds-p x y)
-       (aref *map* x y)))
+       (tile-blocks-sight-p (aref *map* x y))))
 
 (defun mark-visible (x y)
   (when (in-bounds-p x y)
@@ -276,12 +299,24 @@
 (defun draw-map ()
   (setf (blt:layer) *layer-bg*
         (blt:font) "tile")
-  (iterate (for (tile x y) :in-array *map*)
-           (etypecase tile
-             (wall (setf (blt:color) +color-dark-wall+
-                         (blt:cell-char x y) (wall-glyph tile)))
-             (null (setf (blt:color) +color-dark-ground+
-                         (blt:cell-char x y) #\.)))))
+  (labels ((tile-color (tile visible)
+             (etypecase tile
+               (wall (if visible
+                       +color-light-wall+
+                       +color-dark-wall+))
+               (ground (if visible
+                         +color-light-ground+
+                         +color-dark-ground+))))
+           (draw-tile (tile x y visible)
+             (setf (blt:color) (tile-color tile visible)
+                   (blt:cell-char x y) (tile-glyph tile))))
+    (iterate (for (tile x y) :in-array *map*)
+             (for visible = (aref *fov-map* x y))
+             (for seen = (tile-seen tile))
+             (when (and visible (not seen))
+               (setf (tile-seen tile) t))
+             (when (or visible seen)
+               (draw-tile tile x y visible)))))
 
 (defun draw-mouse ()
   (when *show-mouse?*
@@ -294,14 +329,6 @@
     (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
           (blt:cell-char *mouse-x* *mouse-y*) #\full_block)))
 
-(defun draw-fov ()
-  (setf (blt:layer) *layer-fov*
-        (blt:color) (blt:hsva 0.3 0.3 1.0 0.3))
-  (iterate
-    (for (visible? x y) :in-array *fov-map*)
-    (when visible?
-      (setf (blt:cell-char x y) #\full_block))))
-
 (defun draw-status ()
   (setf (blt:color) (blt:rgba 1.0 1.0 1.0)
         (blt:font) nil)
@@ -312,7 +339,6 @@
   (draw-map)
   (draw-objects)
   (draw-mouse)
-  (draw-fov)
   (draw-status)
   (blt:refresh))
 
@@ -331,8 +357,8 @@
 (defun toggle-wall ()
   (multiple-value-bind (x y) (mouse-coords)
     (setf (aref *map* x y)
-          (if (aref *map* x y)
-            nil
+          (if (typep (aref *map* x y) 'wall)
+            (make-ground)
             (make-wall))))
   (recompute-fov)
   (rebuild-map-glyphs))
