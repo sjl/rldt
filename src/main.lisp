@@ -3,7 +3,7 @@
 ;;;; Parameters ---------------------------------------------------------------
 (defvar *running* t)
 
-(defparameter *screen-width* 60)
+(defparameter *screen-width* 64)
 (defparameter *screen-height* 40)
 (defparameter *cell-size* 16)
 
@@ -31,6 +31,11 @@
 (defvar *show-mouse?* t)
 
 (defparameter *assets-directory* "./assets/")
+
+
+;;;; Coordinate Systems -------------------------------------------------------
+(defun-inline c (n)
+  (* 2 n))
 
 
 ;;;; Lines --------------------------------------------------------------------
@@ -108,8 +113,7 @@
 
 
 (defun map-ref? (x y)
-  (when (and (in-range-p 0 x *map-width*)
-             (in-range-p 0 y *map-height*))
+  (when (in-bounds-p x y)
     (aref *map* x y)))
 
 (defun find-wall-glyph (x y)
@@ -167,23 +171,26 @@
   (apply #'make-object x y :layer *layer-mobs* key-slots))
 
 
+(defun object-at (x y)
+  (some (lambda (o)
+          (and (= x (object-x o))
+               (= y (object-y o))
+               o))
+        *objects*))
+
 (defun blockedp (x y)
   (or (tile-blocks-movement-p (map-ref? x y))
-      (some (lambda (o)
-              (and (= x (object-x o))
-                   (= y (object-y o))))
-            *objects*)))
+      (object-at x y)))
 
-(defun move-object (object dx dy)
-  (with-object (object)
-    (let ((tx (+ x dx))
-          (ty (+ y dy)))
-      (unless (or (not (in-range-p 0 tx *map-width*))
-                  (not (in-range-p 0 ty *map-height*))
-                  (blockedp tx ty))
-        (setf x tx)
-        (setf y ty))))
-  (values))
+(defun move-object (object x y)
+  (with-object (object px py)
+    (if (or (not (in-range-p 0 x *map-width*))
+            (not (in-range-p 0 y *map-height*))
+            (blockedp x y))
+      nil
+      (progn (setf px x)
+             (setf py y)
+             t))))
 
 (defun draw-object (object)
   (with-object (object)
@@ -192,16 +199,10 @@
             (blt:font) "tile"
             (blt:composition) t
             (blt:color) (blt:hsva 0 0 0)
-            (blt:cell-char x y) #\full_block
+            (blt:cell-char (c x) (c y)) #\full_block
             (blt:color) color
-            (blt:cell-char x y) glyph
+            (blt:cell-char (c x) (c y)) glyph
             (blt:composition) nil)))
-  (values))
-
-(defun clear-object (object)
-  (with-object (object)
-    (setf (blt:layer) layer
-          (blt:cell-char x y) #\space))
   (values))
 
 
@@ -214,9 +215,37 @@
                 (object-y *player*))
         (rl.bsp::random-room-point (random-room))))
 
-(defun move-player (dx dy)
-  (move-object *player* dx dy)
-  (recompute-fov))
+
+(defun player-move (x y)
+  (prog1
+      (move-object *player* x y)
+    (recompute-fov)))
+
+(defun player-attack (target)
+  (pr 'attacking (object-name target))
+  t)
+
+(defun player-move-or-attack (dx dy)
+  (let* ((tx (+ (object-x *player*) dx))
+         (ty (+ (object-y *player*) dy))
+         (target (object-at tx ty)))
+    (if target
+      (player-attack target)
+      (player-move tx ty))))
+
+
+
+;;;; AI -----------------------------------------------------------------------
+(defvar *turn* 0)
+
+(defun tick-object (object)
+  object)
+
+(defun tick-objects ()
+  (incf *turn*)
+  (dolist (object *objects*)
+    (unless (eq object *player*)
+      (tick-object object))))
 
 
 ;;;; Config -------------------------------------------------------------------
@@ -225,26 +254,26 @@
 
 
 (defun config-fonts ()
-  (blt:set "font: ~A, size=~Dx~:*~D;"
+  (blt:set "font: ~A, size=~Dx~:*~D, spacing=2x2;"
            (asset-path "ProggySquare/ProggySquare.ttf")
            *cell-size*)
-  (blt:set "tile font: ~A, size=16x16, resize=~Dx~:*~D, codepage=437;"
+  (blt:set "tile font: ~A, size=16x16, resize=~Dx~:*~D, codepage=437, spacing=2x2;"
            (asset-path "df.png")
            *cell-size*)
-  (blt:set "text font: ~A, size=~Dx~D;"
+  (blt:set "text font: ~A, size=~Dx~D, spacing=1x2;"
            (asset-path "UbuntuMono/UbuntuMono-R.ttf")
            *cell-size*
            *cell-size*)
   (when *enable-tiles*
-    (blt:set "tile 0x0000: ~A, size=16x16, resize=~Dx~:*~D, align=dead-center, codepage=~A;"
+    (blt:set "tile 0x0000: ~A, size=16x16, resize=~Dx~:*~D, align=dead-center, codepage=~A, spacing=2x2;"
              (asset-path "tiles.png")
              *cell-size*
              (asset-path "codepage.txt"))))
 
 (defun config ()
-  (blt:set (format nil "window.size = ~Dx~D" *screen-width* *screen-height*))
+  (blt:set (format nil "window.size = ~Dx~D" (* 2 *screen-width*) (* 2 *screen-height*)))
   (blt:set "window.title = /r/roguelikedev")
-  (blt:set "window.cellsize = ~Dx~:*~D" *cell-size*)
+  (blt:set "window.cellsize = ~Dx~:*~D" (floor *cell-size* 2))
   (blt:set "output.vsync = true")
   (blt:set "input.filter = keyboard, mouse")
   (config-fonts)
@@ -367,7 +396,7 @@
                          +color-dark-ground+))))
            (draw-tile (tile x y visible)
              (setf (blt:color) (tile-color tile visible)
-                   (blt:cell-char x y) (tile-glyph tile))))
+                   (blt:cell-char (c x) (c y)) (tile-glyph tile))))
     (iterate (for (tile x y) :in-array *map*)
              (for visible = (aref *fov-map* x y))
              (for seen = (tile-seen tile))
@@ -383,19 +412,24 @@
     (iterate
       (for (x . y) :in-vector (line (object-x *player*) (object-y *player*)
                                     *mouse-x* *mouse-y*))
-      (setf (blt:cell-char x y) #\full_block))
+      (setf (blt:cell-char (c x) (c y)) #\full_block))
     (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
-          (blt:cell-char *mouse-x* *mouse-y*) #\full_block)))
+          (blt:cell-char (c *mouse-x*) (c *mouse-y*)) #\full_block)))
 
 (defun draw-status ()
   (setf (blt:color) (blt:rgba 1.0 1.0 1.0)
         (blt:font) "text")
-  (blt:print 0 (- *screen-height* 4)
+  (blt:print (c (- *screen-width* 10))
+             (c (- *screen-height* 1))
+             (format nil "turn ~D" *turn*)
+             :width (* 2 10)
+             :halign :right)
+  (blt:print (c 0) (c (- *screen-height* 4))
              (format nil "F1: Refresh Config~%~
                           F2: Toggle Tiles~%~
                           F3: Toggle Mouse~%~
                           F4: Rebuild World"))
-  (blt:print 25 (- *screen-height* 4)
+  (blt:print (c 15) (c (- *screen-height* 4))
              (format nil "F5: Reveal Map~3%~
                           ESC: Quit")))
 
@@ -410,7 +444,10 @@
 
 ;;;; Input --------------------------------------------------------------------
 (defun update-mouse-location ()
-  (setf (values *mouse-x* *mouse-y*) (blt:mouse)))
+  (multiple-value-bind (x y)
+      (blt:mouse)
+    (setf *mouse-x* (floor x 2)
+          *mouse-y* (floor y 2))))
 
 
 (defun mouse-coords ()
@@ -421,18 +458,20 @@
 
 (defun toggle-wall ()
   (multiple-value-bind (x y) (mouse-coords)
-    (setf (aref *map* x y)
-          (if (typep (aref *map* x y) 'wall)
-            (make-ground)
-            (make-wall))))
-  (recompute-fov)
-  (rebuild-map-glyphs))
+    (when (in-bounds-p x y)
+      (setf (aref *map* x y)
+            (if (typep (aref *map* x y) 'wall)
+              (make-ground)
+              (make-wall)))
+      (recompute-fov)
+      (rebuild-map-glyphs))))
 
 (defun warp-player ()
   (multiple-value-bind (x y) (mouse-coords)
-    (setf (object-x *player*) x
-          (object-y *player*) y))
-  (recompute-fov))
+    (when (in-bounds-p x y)
+      (setf (object-x *player*) x
+            (object-y *player*) y)
+      (recompute-fov))))
 
 
 (defun reveal-map ()
@@ -488,14 +527,14 @@
     (:regenerate-world (generate) (values t nil))
     (:warp-player (warp-player) (values t nil))
 
-    (:move-up    (move-player  0 -1) (values t t))
-    (:move-down  (move-player  0  1) (values t t))
-    (:move-left  (move-player -1  0) (values t t))
-    (:move-right (move-player  1  0) (values t t))
-    (:move-up-left    (move-player -1 -1) (values t t))
-    (:move-up-right   (move-player  1 -1) (values t t))
-    (:move-down-left  (move-player -1  1) (values t t))
-    (:move-down-right (move-player  1  1) (values t t))
+    (:move-up         (values t (player-move-or-attack  0 -1)))
+    (:move-down       (values t (player-move-or-attack  0  1)))
+    (:move-left       (values t (player-move-or-attack -1  0)))
+    (:move-right      (values t (player-move-or-attack  1  0)))
+    (:move-up-left    (values t (player-move-or-attack -1 -1)))
+    (:move-up-right   (values t (player-move-or-attack  1 -1)))
+    (:move-down-left  (values t (player-move-or-attack -1  1)))
+    (:move-down-right (values t (player-move-or-attack  1  1)))
 
     (:quit (setf *running* (values nil nil)))))
 
@@ -504,7 +543,10 @@
     (for event = (read-event))
     (until (eql event :done))
     (when event
-      (oring (handle-event event)))))
+      (for (values needs-redraw needs-tick) = (handle-event event))
+      (when needs-tick
+        (tick-objects))
+      (oring needs-redraw))))
 
 
 ;;;; Main Loop ----------------------------------------------------------------
