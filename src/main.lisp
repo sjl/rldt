@@ -3,22 +3,26 @@
 ;;;; Parameters ---------------------------------------------------------------
 (defvar *running* t)
 
-(defparameter *screen-width* 80)
-(defparameter *screen-height* 60)
+(defparameter *screen-width* 60)
+(defparameter *screen-height* 40)
 (defparameter *cell-size* 16)
 
 (defparameter *map-width* *screen-width*)
 (defparameter *map-height* (- *screen-height* 5))
+
+(defparameter *max-monsters-per-room* 3)
 
 (defconstant +color-light-wall+ (blt:hsva 1.0 0.0 0.7))
 (defconstant +color-light-ground+ (blt:hsva 1.0 0.0 0.5))
 (defconstant +color-dark-wall+ (blt:hsva 1.0 0.0 0.4))
 (defconstant +color-dark-ground+ (blt:hsva 1.0 0.0 0.3))
 
+
 (defparameter *layer-bg* 0)
 (defparameter *layer-mobs* 1)
 (defparameter *layer-fov* 9)
 (defparameter *layer-mouse* 10)
+
 
 (defvar *mouse-x* 0)
 (defvar *mouse-y* 0)
@@ -81,6 +85,7 @@
 ;;;; Map ----------------------------------------------------------------------
 (defvar *map* nil)
 (defvar *bsp* nil)
+(defvar *rooms* nil)
 
 
 (defun carve-tile (map x y)
@@ -98,6 +103,7 @@
         (bsp (rl.bsp::make-partitioning *map-width* *map-height*)))
     (setf *bsp* bsp)
     (rl.bsp::carve-partitioning (curry #'carve-tile map) bsp)
+    (setf *rooms* (coerce (rl.bsp::flatten-partitioning *bsp*) 'vector))
     map))
 
 
@@ -138,10 +144,16 @@
                    (find-wall-glyph x y)))))
 
 
+(defun random-room ()
+  (random-elt *rooms*))
+
+
 ;;;; Game Objects -------------------------------------------------------------
 (defclass* object ()
   ((x :type fixnum)
    (y :type fixnum)
+   (name :type string)
+   (blocking :type boolean :initform t)
    (glyph :type character :initform #\?)
    (color :initform (blt:hsva 1.0 0.0 1.0))
    (layer :initform 0)))
@@ -151,6 +163,16 @@
 (defun make-object (x y &rest key-slots)
   (apply #'make-instance 'object :x x :y y key-slots))
 
+(defun make-mob (x y &rest key-slots)
+  (apply #'make-object x y :layer *layer-mobs* key-slots))
+
+
+(defun blockedp (x y)
+  (or (tile-blocks-movement-p (map-ref? x y))
+      (some (lambda (o)
+              (and (= x (object-x o))
+                   (= y (object-y o))))
+            *objects*)))
 
 (defun move-object (object dx dy)
   (with-object (object)
@@ -158,17 +180,22 @@
           (ty (+ y dy)))
       (unless (or (not (in-range-p 0 tx *map-width*))
                   (not (in-range-p 0 ty *map-height*))
-                  (tile-blocks-movement-p (aref *map* tx ty)))
+                  (blockedp tx ty))
         (setf x tx)
         (setf y ty))))
   (values))
 
 (defun draw-object (object)
   (with-object (object)
-    (setf (blt:layer) layer
-          (blt:color) color
-          (blt:font) "tile"
-          (blt:cell-char x y) glyph))
+    (when (visiblep x y)
+      (setf (blt:layer) layer
+            (blt:font) "tile"
+            (blt:composition) t
+            (blt:color) (blt:hsva 0 0 0)
+            (blt:cell-char x y) #\full_block
+            (blt:color) color
+            (blt:cell-char x y) glyph
+            (blt:composition) nil)))
   (values))
 
 (defun clear-object (object)
@@ -179,15 +206,17 @@
 
 
 (defvar *player* nil)
-(defvar *fungus* nil)
-(defvar *goblin* nil)
 (defvar *objects* nil)
 
 
 (defun place-player-initial ()
   (setf (values (object-x *player*)
                 (object-y *player*))
-        (rl.bsp::random-room-point (random-elt (rl.bsp::flatten-partitioning *bsp*)))))
+        (rl.bsp::random-room-point (random-room))))
+
+(defun move-player (dx dy)
+  (move-object *player* dx dy)
+  (recompute-fov))
 
 
 ;;;; Config -------------------------------------------------------------------
@@ -219,28 +248,51 @@
 
 
 ;;;; Generation ---------------------------------------------------------------
+(defparameter *monster-selection*
+  (make-weightlist '((60 . goblin)
+                     (30 . orc)
+                     (10 . troll))))
+
+(defun make-goblin (x y)
+  (make-mob x y :glyph #\g :color (blt:rgba 0 255 0) :name "A goblin"))
+
+(defun make-orc (x y)
+  (make-mob x y :glyph #\o :color (blt:rgba 0 255 0) :name "An orc"))
+
+(defun make-troll (x y)
+  (make-mob x y :glyph #\T :color (blt:rgba 0 200 0) :name "A troll"))
+
+(defun random-monster (x y)
+  (ecase (weightlist-random *monster-selection*)
+    (goblin (make-goblin x y))
+    (orc (make-orc x y))
+    (troll (make-troll x y))))
+
+(defun populate-room (room)
+  (dorepeat (random (1+ *max-monsters-per-room*))
+    (multiple-value-bind (x y)
+        (rl.bsp::random-room-point room)
+      (unless (blockedp x y)
+        (push (random-monster x y) *objects*)))))
+
+(defun populate-rooms ()
+  (map nil #'populate-room *rooms*))
+
+
+(defun make-player ()
+  (make-mob (truncate *screen-width* 2)
+            (truncate *screen-height* 2)
+            :name "You"
+            :glyph #\@
+            :layer *layer-mobs*))
+
 (defun generate-player ()
-  (setf *player*
-        (make-object (truncate *screen-width* 2)
-                     (truncate *screen-height* 2)
-                     :glyph #\@
-                     :layer *layer-mobs*)))
+  (-<> (make-player)
+    (setf *player* <>)
+    (push <> *objects*)))
 
 (defun generate-mobs ()
-  (setf *fungus*
-        (make-object 4 4
-                     :glyph #\F
-                     :color (blt:hsva 0.3 0.8 1.0)
-                     :layer *layer-mobs*)
-        *goblin*
-        (make-object 2 2
-                     :glyph #\g
-                     :layer *layer-mobs*)))
-
-(defun generate-objects ()
-  (generate-player)
-  (generate-mobs)
-  (setf *objects* (list *player* *fungus* *goblin*)))
+  (populate-rooms))
 
 
 (defun generate-map ()
@@ -255,8 +307,10 @@
 
 
 (defun generate ()
-  (generate-objects)
+  (setf *objects* nil)
   (generate-map)
+  (generate-player)
+  (generate-mobs)
   (initialize)
   (values))
 
@@ -370,6 +424,11 @@
   (recompute-fov))
 
 
+(defun reveal-map ()
+  (do-array (tile *map*)
+    (setf (tile-seen tile) t)))
+
+
 (defun read-event ()
   (if (blt:has-input-p)
     (blt:key-case (blt:read)
@@ -377,6 +436,7 @@
       (:f2 :flip-tiles)
       (:f3 :flip-mouse)
       (:f4 :regenerate-world)
+      (:f5 :reveal-map)
 
       (:up :move-up)
       (:down :move-down)
@@ -392,19 +452,28 @@
     :done))
 
 (defun handle-event (event)
+  "Handle the given event.
+
+  Returns two values: whether the screen needs to be redrawn, and whether the
+  game time should be ticked.
+
+  "
   (ecase event
-    (:refresh-config (config) t)
-    (:flip-tiles (notf *enable-tiles*) (config) t)
-    (:flip-mouse (notf *show-mouse?*) (update-mouse-location) t)
-    (:mouse-move (update-mouse-location) t)
-    (:toggle-wall (toggle-wall) t)
-    (:regenerate-world (generate) t)
-    (:move-up (move-object *player* 0 -1) (recompute-fov) t)
-    (:move-down (move-object *player* 0 1) (recompute-fov) t)
-    (:move-left (move-object *player* -1 0) (recompute-fov) t)
-    (:move-right (move-object *player* 1 0) (recompute-fov) t)
-    (:warp-player (warp-player) t)
-    (:quit (setf *running* nil))))
+    (:refresh-config (config) (values t nil))
+    (:flip-tiles (notf *enable-tiles*) (config) (values t))
+    (:flip-mouse (notf *show-mouse?*) (update-mouse-location) (values t nil))
+    (:mouse-move (update-mouse-location) (values t nil))
+    (:reveal-map (reveal-map) (values t nil))
+    (:toggle-wall (toggle-wall) (values t nil))
+    (:regenerate-world (generate) (values t nil))
+    (:warp-player (warp-player) (values t nil))
+
+    (:move-up    (move-player  0 -1) (values t t))
+    (:move-down  (move-player  0  1) (values t t))
+    (:move-left  (move-player -1  0) (values t t))
+    (:move-right (move-player  1  0) (values t t))
+
+    (:quit (setf *running* (values nil nil)))))
 
 (defun handle-events ()
   (iterate

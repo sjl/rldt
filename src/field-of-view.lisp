@@ -190,7 +190,6 @@
     ((4 7) (< y h))))
 
 
-
 (defun compute-fov-for-column-portion%
     (octant ox oy radius queue x top bottom opaquep mark-visible)
   (iterate

@@ -6,6 +6,7 @@
     :rl.quickutils)
   (:export
     :dorange
+    :dorepeat
     :sortf))
 
 (defpackage :rl
