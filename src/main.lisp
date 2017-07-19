@@ -231,6 +231,10 @@
   (blt:set "tile font: ~A, size=16x16, resize=~Dx~:*~D, codepage=437;"
            (asset-path "df.png")
            *cell-size*)
+  (blt:set "text font: ~A, size=~Dx~D;"
+           (asset-path "UbuntuMono/UbuntuMono-R.ttf")
+           *cell-size*
+           *cell-size*)
   (when *enable-tiles*
     (blt:set "tile 0x0000: ~A, size=16x16, resize=~Dx~:*~D, align=dead-center, codepage=~A;"
              (asset-path "tiles.png")
@@ -385,8 +389,15 @@
 
 (defun draw-status ()
   (setf (blt:color) (blt:rgba 1.0 1.0 1.0)
-        (blt:font) nil)
-  (blt:print 0 (1- *screen-height*) "Hello."))
+        (blt:font) "text")
+  (blt:print 0 (- *screen-height* 4)
+             (format nil "F1: Refresh Config~%~
+                          F2: Toggle Tiles~%~
+                          F3: Toggle Mouse~%~
+                          F4: Rebuild World"))
+  (blt:print 25 (- *screen-height* 4)
+             (format nil "F5: Reveal Map~3%~
+                          ESC: Quit")))
 
 (defun draw ()
   (blt:clear)
@@ -443,6 +454,15 @@
       (:left :move-left)
       (:right :move-right)
 
+      (:numpad-1 :move-down-left)
+      (:numpad-2 :move-down)
+      (:numpad-3 :move-down-right)
+      (:numpad-4 :move-left)
+      (:numpad-6 :move-right)
+      (:numpad-7 :move-up-left)
+      (:numpad-8 :move-up)
+      (:numpad-9 :move-up-right)
+
       (:mouse-move :mouse-move)
       (:mouse-left :toggle-wall)
       (:mouse-right :warp-player)
@@ -472,6 +492,10 @@
     (:move-down  (move-player  0  1) (values t t))
     (:move-left  (move-player -1  0) (values t t))
     (:move-right (move-player  1  0) (values t t))
+    (:move-up-left    (move-player -1 -1) (values t t))
+    (:move-up-right   (move-player  1 -1) (values t t))
+    (:move-down-left  (move-player -1  1) (values t t))
+    (:move-down-right (move-player  1  1) (values t t))
 
     (:quit (setf *running* (values nil nil)))))
 
