@@ -20,8 +20,7 @@
 
 (defparameter *layer-bg* 0)
 (defparameter *layer-mobs* 1)
-(defparameter *layer-fov* 9)
-(defparameter *layer-mouse* 10)
+(defparameter *layer-mouse* 5)
 
 
 (defvar *mouse-x* 0)
@@ -31,6 +30,14 @@
 (defvar *show-mouse?* t)
 
 (defparameter *assets-directory* "./assets/")
+
+
+;;;; Types --------------------------------------------------------------------
+(deftype layer ()
+  '(integer 0 10000))
+
+(deftype coordinate ()
+  '(integer 0 10000))
 
 
 ;;;; Coordinate Systems -------------------------------------------------------
@@ -43,6 +50,11 @@
 
 (defun (setf cell-char) (new-value x y)
   (setf (blt:cell-char (* 2 x) (* 2 y)) new-value))
+
+
+(defun-inline in-bounds-p (x y)
+  (and (in-range-p 0 x *map-width*)
+       (in-range-p 0 y *map-height*)))
 
 
 ;;;; Lines --------------------------------------------------------------------
@@ -159,106 +171,178 @@
   (random-elt *rooms*))
 
 
-;;;; Game Objects -------------------------------------------------------------
-(defclass* object ()
-  ((x :type fixnum)
-   (y :type fixnum)
-   (name :type string)
-   (blocking :type boolean :initform t)
-   (glyph :type character :initform #\?)
-   (color :initform (blt:hsva 1.0 0.0 1.0))
-   (layer :initform 0)))
+;;;; Aspects ------------------------------------------------------------------
 
-(define-with-macro object x y glyph color layer)
+;;; Renderable
+(define-aspect renderable
+  (glyph :type character :initform #\?)
+  (color :initform (blt:hsva 0.0 0.0 1.0))
+  (layer :type layer :initform *layer-mobs*))
 
-(defun make-object (x y &rest key-slots)
-  (apply #'make-instance 'object :x x :y y key-slots))
 
-(defun make-mob (x y &rest key-slots)
-  (apply #'make-object x y :layer *layer-mobs* key-slots))
+;;; Flavor
+(define-aspect flavor
+  (name :type string :initform "Something"))
+
+
+;;; Locations
+(defvar *locations* nil)
+
+(define-aspect loc
+  (x :type coordinate)
+  (y :type coordinate))
+
+(defun initialize-locations ()
+  (setf *locations* (make-array (list *map-width* *map-height*)
+                      :initial-element nil
+                      :element-type 'list)))
+
+(defun loc-insert-entity (e)
+  (push e (aref *locations* (loc/x e) (loc/y e))))
+
+(defun loc-remove-entity (e)
+  (zapf (aref *locations* (loc/x e) (loc/y e))
+        (delete e %)))
+
+(defun loc-move-entity (e new-x new-y)
+  (loc-remove-entity e)
+  (setf (loc/x e) new-x
+        (loc/y e) new-y)
+  (loc-insert-entity e))
+
+(defun lref (x y)
+  (aref *locations* x y))
+
+(defmethod entity-created :after ((entity loc))
+  (loc-insert-entity entity))
+
+(defmethod entity-destroyed :after ((entity loc))
+  (loc-remove-entity entity))
+
+
+;;; Brains
+(define-aspect brain)
+
+
+;;;; Entities -----------------------------------------------------------------
+
+;;;; Monsters
+(define-entity monster (loc renderable flavor brain))
+
+(defun create-goblin (x y)
+  (create-entity 'monster
+    :loc/x x
+    :loc/y y
+    :renderable/glyph #\g
+    :renderable/color (blt:rgba 0 255 0)
+    :flavor/name "A goblin"))
+
+(defun create-orc (x y)
+  (create-entity 'monster
+    :loc/x x
+    :loc/y y
+    :renderable/glyph #\o
+    :renderable/color (blt:rgba 0 200 80)
+    :flavor/name "An orc"))
+
+(defun create-troll (x y)
+  (create-entity 'monster
+    :loc/x x
+    :loc/y y
+    :renderable/glyph #\T
+    :renderable/color (blt:rgba 0 180 0)
+    :flavor/name "A troll"))
+
+
+;;; Player
+(define-entity player (loc renderable flavor))
+
+(defun create-player ()
+  (create-entity 'player
+    :loc/x 0 ; loc will be set later, after map generation
+    :loc/y 0
+    :renderable/glyph #\@
+    :flavor/name "You"))
+
+
+;;;; Game Logic ---------------------------------------------------------------
+(defvar *player* nil)
 
 
 (defun object-at (x y)
-  (some (lambda (o)
-          (and (= x (object-x o))
-               (= y (object-y o))
-               o))
-        *objects*))
+  (when (in-bounds-p x y)
+    (first (lref x y))))
 
 (defun blockedp (x y)
   (or (tile-blocks-movement-p (map-ref? x y))
       (object-at x y)))
 
-(defun move-object (object x y)
-  (with-object (object px py)
-    (if (or (not (in-range-p 0 x *map-width*))
-            (not (in-range-p 0 y *map-height*))
-            (blockedp x y))
-      nil
-      (progn (setf px x)
-             (setf py y)
-             t))))
-
-(defun draw-object (object)
-  (with-object (object)
-    (when (visiblep x y)
-      (setf (blt:layer) layer
-            (blt:font) "tile"
-            (blt:composition) t
-            (blt:color) (blt:hsva 0 0 0)
-            (cell-char x y) #\full_block
-            (blt:color) color
-            (cell-char x y) glyph
-            (blt:composition) nil)))
-  (values))
-
-
-(defvar *player* nil)
-(defvar *objects* nil)
+(defun move (entity x y)
+  (if (or (not (in-bounds-p x y))
+          (blockedp x y))
+    nil
+    (progn (loc-move-entity entity x y)
+           t)))
 
 
 (defun place-player-initial ()
-  (setf (values (object-x *player*)
-                (object-y *player*))
-        (rl.bsp::random-room-point (random-room))))
+  (multiple-value-call #'loc-move-entity *player*
+    (rl.bsp::random-room-point (random-room))))
 
 
 (defun player-move (x y)
   (prog1
-      (move-object *player* x y)
+      (move *player* x y)
     (recompute-fov)))
 
 (defun player-attack (target)
-  (pr 'attacking (object-name target))
+  (pr 'attacking (flavor/name target))
   t)
 
 (defun player-move-or-attack (dx dy)
-  (let* ((tx (+ (object-x *player*) dx))
-         (ty (+ (object-y *player*) dy))
+  (let* ((tx (+ (loc/x *player*) dx))
+         (ty (+ (loc/y *player*) dy))
          (target (object-at tx ty)))
     (if target
       (player-attack target)
       (player-move tx ty))))
 
 
+;;;; Systems ------------------------------------------------------------------
 
-;;;; AI -----------------------------------------------------------------------
+;;; Rendering
+(defun draw-entity (entity)
+  (let ((x (loc/x entity))
+        (y (loc/y entity)))
+    (when (visiblep x y)
+      (setf (blt:layer) (renderable/layer entity)
+            (blt:font) "tile"
+            (blt:composition) t
+            (blt:color) (blt:hsva 0 0 0)
+            (cell-char x y) #\full_block
+            (blt:color) (renderable/color entity)
+            (cell-char x y) (renderable/glyph entity)
+            (blt:composition) nil)))
+  (values))
+
+(define-system render ((entity renderable loc))
+  (draw-entity entity))
+
+
+;;; AI
 (defvar *turn* 0)
 
-(defun tick-object (object)
-  object)
+(define-system act ((entity brain))
+  entity)
 
-(defun tick-objects ()
+(defun tick ()
   (incf *turn*)
-  (dolist (object *objects*)
-    (unless (eq object *player*)
-      (tick-object object))))
+  (run-act))
 
 
 ;;;; Config -------------------------------------------------------------------
 (defun asset-path (filename)
   (concatenate 'string *assets-directory* filename))
-
 
 (defun config-fonts ()
   (blt:set "font: ~A, size=~Dx~:*~D, spacing=2x2;"
@@ -278,6 +362,7 @@
              (asset-path "codepage.txt"))))
 
 (defun config ()
+  (assert (evenp *cell-size*))
   (blt:set (format nil "window.size = ~Dx~D" (* 2 *screen-width*) (* 2 *screen-height*)))
   (blt:set "window.title = /r/roguelikedev")
   (blt:set "window.cellsize = ~Dx~:*~D" (floor *cell-size* 2))
@@ -293,65 +378,44 @@
                      (30 . orc)
                      (10 . troll))))
 
-(defun make-goblin (x y)
-  (make-mob x y :glyph #\g :color (blt:rgba 0 255 0) :name "A goblin"))
 
-(defun make-orc (x y)
-  (make-mob x y :glyph #\o :color (blt:rgba 0 255 0) :name "An orc"))
-
-(defun make-troll (x y)
-  (make-mob x y :glyph #\T :color (blt:rgba 0 200 0) :name "A troll"))
-
-(defun random-monster (x y)
+(defun create-random-monster (x y)
   (ecase (weightlist-random *monster-selection*)
-    (goblin (make-goblin x y))
-    (orc (make-orc x y))
-    (troll (make-troll x y))))
+    (goblin (create-goblin x y))
+    (orc (create-orc x y))
+    (troll (create-troll x y))))
 
 (defun populate-room (room)
   (dorepeat (random (1+ *max-monsters-per-room*))
     (multiple-value-bind (x y)
         (rl.bsp::random-room-point room)
       (unless (blockedp x y)
-        (push (random-monster x y) *objects*)))))
+        (create-random-monster x y)))))
 
 (defun populate-rooms ()
   (map nil #'populate-room *rooms*))
 
 
-(defun make-player ()
-  (make-mob (truncate *screen-width* 2)
-            (truncate *screen-height* 2)
-            :name "You"
-            :glyph #\@
-            :layer *layer-mobs*))
-
 (defun generate-player ()
-  (-<> (make-player)
-    (setf *player* <>)
-    (push <> *objects*)))
+  (setf *player* (create-player)))
 
 (defun generate-mobs ()
   (populate-rooms))
-
 
 (defun generate-map ()
   (setf *map* (make-map)
         *fov-map* (make-fov-map)))
 
 
-(defun initialize ()
-  (place-player-initial)
-  (rebuild-map-glyphs)
-  (recompute-fov))
-
-
 (defun generate ()
-  (setf *objects* nil)
+  (clear-entities)
+  (initialize-locations)
   (generate-map)
   (generate-player)
   (generate-mobs)
-  (initialize)
+  (place-player-initial)
+  (rebuild-map-glyphs)
+  (recompute-fov)
   (values))
 
 
@@ -364,10 +428,6 @@
 (defun clear-fov-map ()
   (fill-multidimensional-array *fov-map* nil))
 
-
-(defun-inline in-bounds-p (x y)
-  (and (in-range-p 0 x *map-width*)
-       (in-range-p 0 y *map-height*)))
 
 (defun opaquep (x y)
   (and (in-bounds-p x y)
@@ -382,28 +442,26 @@
 
 (defun recompute-fov ()
   (clear-fov-map)
-  (compute-fov (object-x *player*) (object-y *player*) 10
+  (compute-fov (loc/x *player*) (loc/y *player*) 10
                #'opaquep #'mark-visible))
 
 
 ;;;; Rendering ----------------------------------------------------------------
-(defun draw-objects ()
-  (map nil #'draw-object *objects*))
+(defun tile-color (tile visible?)
+  (etypecase tile
+    (wall (if visible?
+            +color-light-wall+
+            +color-dark-wall+))
+    (ground (if visible?
+              +color-light-ground+
+              +color-dark-ground+))))
 
 (defun draw-map ()
   (setf (blt:layer) *layer-bg*
         (blt:font) "tile")
-  (labels ((tile-color (tile visible)
-             (etypecase tile
-               (wall (if visible
-                       +color-light-wall+
-                       +color-dark-wall+))
-               (ground (if visible
-                         +color-light-ground+
-                         +color-dark-ground+))))
-           (draw-tile (tile x y visible)
-             (setf (blt:color) (tile-color tile visible)
-                   (cell-char x y) (tile-glyph tile))))
+  (flet ((draw-tile (tile x y visible)
+           (setf (blt:color) (tile-color tile visible)
+                 (cell-char x y) (tile-glyph tile))))
     (iterate (for (tile x y) :in-array *map*)
              (for visible = (aref *fov-map* x y))
              (for seen = (tile-seen tile))
@@ -417,7 +475,7 @@
     (setf (blt:layer) *layer-mouse*
           (blt:color) (blt:hsva 1.0 0.0 1.0 0.5))
     (iterate
-      (for (x . y) :in-vector (line (object-x *player*) (object-y *player*)
+      (for (x . y) :in-vector (line (loc/x *player*) (loc/y *player*)
                                     *mouse-x* *mouse-y*))
       (setf (cell-char x y) #\full_block))
     (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
@@ -443,7 +501,7 @@
 (defun draw ()
   (blt:clear)
   (draw-map)
-  (draw-objects)
+  (run-render)
   (draw-mouse)
   (draw-status)
   (blt:refresh))
@@ -476,8 +534,8 @@
 (defun warp-player ()
   (multiple-value-bind (x y) (mouse-coords)
     (when (in-bounds-p x y)
-      (setf (object-x *player*) x
-            (object-y *player*) y)
+      (setf (loc/x *player*) x
+            (loc/y *player*) y)
       (recompute-fov))))
 
 
@@ -551,8 +609,7 @@
     (until (eql event :done))
     (when event
       (for (values needs-redraw needs-tick) = (handle-event event))
-      (when needs-tick
-        (tick-objects))
+      (when needs-tick (tick))
       (oring needs-redraw))))
 
 

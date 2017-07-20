@@ -5,7 +5,8 @@
 
   :license "MIT/X11"
 
-  :depends-on (:cl-blt
+  :depends-on (:beast
+               :cl-blt
                :cl-pcg
                :iterate
                :losh)

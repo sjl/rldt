@@ -12,6 +12,7 @@
 (defpackage :rl
   (:use
     :cl
+    :beast
     :iterate
     :losh
     :rl.utils
