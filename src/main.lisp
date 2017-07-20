@@ -34,8 +34,15 @@
 
 
 ;;;; Coordinate Systems -------------------------------------------------------
-(defun-inline c (n)
-  (* 2 n))
+(defun print (x y string &key width height (halign :default) (valign :default))
+  (blt:print (* 2 x) (* 2 y) string
+             :width (when width (* 2 width))
+             :height (when height (* 2 height))
+             :halign halign
+             :valign valign))
+
+(defun (setf cell-char) (new-value x y)
+  (setf (blt:cell-char (* 2 x) (* 2 y)) new-value))
 
 
 ;;;; Lines --------------------------------------------------------------------
@@ -199,9 +206,9 @@
             (blt:font) "tile"
             (blt:composition) t
             (blt:color) (blt:hsva 0 0 0)
-            (blt:cell-char (c x) (c y)) #\full_block
+            (cell-char x y) #\full_block
             (blt:color) color
-            (blt:cell-char (c x) (c y)) glyph
+            (cell-char x y) glyph
             (blt:composition) nil)))
   (values))
 
@@ -396,7 +403,7 @@
                          +color-dark-ground+))))
            (draw-tile (tile x y visible)
              (setf (blt:color) (tile-color tile visible)
-                   (blt:cell-char (c x) (c y)) (tile-glyph tile))))
+                   (cell-char x y) (tile-glyph tile))))
     (iterate (for (tile x y) :in-array *map*)
              (for visible = (aref *fov-map* x y))
              (for seen = (tile-seen tile))
@@ -412,26 +419,26 @@
     (iterate
       (for (x . y) :in-vector (line (object-x *player*) (object-y *player*)
                                     *mouse-x* *mouse-y*))
-      (setf (blt:cell-char (c x) (c y)) #\full_block))
+      (setf (cell-char x y) #\full_block))
     (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
-          (blt:cell-char (c *mouse-x*) (c *mouse-y*)) #\full_block)))
+          (cell-char *mouse-x* *mouse-y*) #\full_block)))
 
 (defun draw-status ()
   (setf (blt:color) (blt:rgba 1.0 1.0 1.0)
         (blt:font) "text")
-  (blt:print (c (- *screen-width* 10))
-             (c (- *screen-height* 1))
-             (format nil "turn ~D" *turn*)
-             :width (* 2 10)
-             :halign :right)
-  (blt:print (c 0) (c (- *screen-height* 4))
-             (format nil "F1: Refresh Config~%~
-                          F2: Toggle Tiles~%~
-                          F3: Toggle Mouse~%~
-                          F4: Rebuild World"))
-  (blt:print (c 15) (c (- *screen-height* 4))
-             (format nil "F5: Reveal Map~3%~
-                          ESC: Quit")))
+  (print (- *screen-width* 10)
+         (- *screen-height* 1)
+         (format nil "turn ~D" *turn*)
+         :width 10
+         :halign :right)
+  (print 0 (- *screen-height* 4)
+         (format nil "F1: Refresh Config~%~
+                      F2: Toggle Tiles~%~
+                      F3: Toggle Mouse~%~
+                      F4: Rebuild World"))
+  (print 15 (- *screen-height* 4)
+         (format nil "F5: Reveal Map~3%~
+                      ESC: Quit")))
 
 (defun draw ()
   (blt:clear)

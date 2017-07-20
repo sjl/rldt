@@ -19,7 +19,9 @@
   (:export
     :run
     :main
-    :main-mac))
+    :main-mac)
+  (:shadow
+    :print))
 
 (defpackage :rl.bsp
   (:use
