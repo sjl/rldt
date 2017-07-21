@@ -223,6 +223,10 @@
   (loc-remove-entity entity))
 
 
+;;; Solid
+(define-aspect solid)
+
+
 ;;; Brains
 (define-aspect brain)
 
@@ -257,6 +261,7 @@
 
 (defun heal (entity amount)
   (adjust-health entity amount))
+
 
 ;;; Attacker
 (define-aspect attacker
@@ -298,7 +303,7 @@
 
 
 ;;;; Monsters
-(define-entity monster (loc renderable flavor brain destructible attacker))
+(define-entity monster (loc renderable flavor brain destructible attacker solid))
 
 (defun create-goblin (x y)
   (create-entity 'monster
@@ -334,7 +339,7 @@
 
 
 ;;; Player
-(define-entity player (loc renderable flavor destructible attacker))
+(define-entity player (loc renderable flavor destructible attacker solid))
 
 (defun create-player ()
   (create-entity 'player
@@ -351,13 +356,17 @@
 (defvar *player* nil)
 
 
-(defun object-at (x y)
+(defun objects-at (x y)
   (when (in-bounds-p x y)
-    (first (lref x y))))
+    (lref x y)))
+
+(defun object-at (x y)
+  (first (objects-at x y)))
+
 
 (defun blockedp (x y)
-  (or (tile-blocks-movement-p (map-ref? x y))
-      (object-at x y)))
+  (ensure-boolean (or (tile-blocks-movement-p (map-ref? x y))
+                      (find-if #'solid? (objects-at x y)))))
 
 (defun move-to (entity x y)
   (if (or (not (in-bounds-p x y))

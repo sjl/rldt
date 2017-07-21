@@ -8,6 +8,7 @@
                :curry
                :rcurry
                :map-tree
+               :ensure-boolean
 
                )
   :package "RL.QUICKUTILS")

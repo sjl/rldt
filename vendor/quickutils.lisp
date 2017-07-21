@@ -2,7 +2,7 @@
 ;;;; See http://quickutil.org for details.
 
 ;;;; To regenerate:
-;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:WITH-GENSYMS :CURRY :RCURRY :MAP-TREE) :ensure-package T :package "RL.QUICKUTILS")
+;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:WITH-GENSYMS :CURRY :RCURRY :MAP-TREE :ENSURE-BOOLEAN) :ensure-package T :package "RL.QUICKUTILS")
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (find-package "RL.QUICKUTILS")
@@ -15,7 +15,8 @@
 (when (boundp '*utilities*)
   (setf *utilities* (union *utilities* '(:STRING-DESIGNATOR :WITH-GENSYMS
                                          :MAKE-GENSYM-LIST :ENSURE-FUNCTION
-                                         :CURRY :RCURRY :MAP-TREE))))
+                                         :CURRY :RCURRY :MAP-TREE
+                                         :ENSURE-BOOLEAN))))
 
   (deftype string-designator ()
     "A string designator type. A string designator is either a string, a symbol,
@@ -126,7 +127,12 @@ with and `arguments` to `function`."
                         (rec (cdr tree)))))))
       (rec tree)))
   
+
+  (defun ensure-boolean (x)
+    "Convert `x` into a Boolean value."
+    (and x t))
+  
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (export '(with-gensyms with-unique-names curry rcurry map-tree)))
+  (export '(with-gensyms with-unique-names curry rcurry map-tree ensure-boolean)))
 
 ;;;; END OF quickutils.lisp ;;;;
