@@ -19,7 +19,10 @@
 
 
 (defparameter *layer-bg* 0)
-(defparameter *layer-mobs* 1)
+(defparameter *layer-items* 1)
+(defparameter *layer-corpses* 2)
+(defparameter *layer-mobs* 3)
+(defparameter *layer-player* 4)
 (defparameter *layer-mouse* 5)
 
 
@@ -228,10 +231,11 @@
 (define-aspect destructible
   (current-hp :type integer :initform 1)
   (maximum-hp :type integer :initform 1)
-  (armor :type integer :initform 0))
+  (armor :type integer :initform 0)
+  (on-death :type function))
 
 
-(defmethod entity-created :after ((e destructible))
+(defmethod initialize-instance :after ((e destructible) &key)
   (setf (destructible/current-hp e)
         (destructible/maximum-hp e)))
 
@@ -240,10 +244,16 @@
   (clampf (destructible/current-hp entity)
           0 (destructible/maximum-hp entity)))
 
+(defun kill (entity)
+  (when (slot-boundp entity 'destructible/on-death)
+    (funcall (destructible/on-death entity) entity))
+  (create-corpse-from entity)
+  (destroy-entity entity))
+
 (defun hurt (entity amount)
   (adjust-health entity (- amount))
   (when (zerop (destructible/current-hp entity))
-    (destroy-entity entity)))
+    (kill entity)))
 
 (defun heal (entity amount)
   (adjust-health entity amount))
@@ -273,6 +283,19 @@
 
 
 ;;;; Entities -----------------------------------------------------------------
+
+;;;; Corpses
+(define-entity corpse (loc renderable flavor))
+
+(defun create-corpse-from (entity)
+  (create-entity 'corpse
+    :loc/x (loc/x entity)
+    :loc/y (loc/y entity)
+    :renderable/glyph #\%
+    :renderable/color (renderable/color entity)
+    :renderable/layer *layer-corpses*
+    :flavor/name (format nil "~A corpse" (flavor/name entity))))
+
 
 ;;;; Monsters
 (define-entity monster (loc renderable flavor brain destructible attacker))
@@ -318,6 +341,7 @@
     :loc/x 0 ; loc will be set later, after map generation
     :loc/y 0
     :renderable/glyph #\@
+    :renderable/layer *layer-player*
     :flavor/name "You"
     :destructible/maximum-hp 30
     :attacker/damage '(1 8)))
@@ -366,7 +390,7 @@
   (let* ((tx (+ (loc/x *player*) dx))
          (ty (+ (loc/y *player*) dy))
          (target (object-at tx ty)))
-    (if target
+    (if (and target (destructible? target))
       (player-attack target)
       (player-move-to tx ty))))
 
