@@ -58,7 +58,7 @@
 
 
 ;;;; Lines --------------------------------------------------------------------
-(defun-inline distance (x1 y1 x2 y2)
+(defun-inline line-distance (x1 y1 x2 y2)
   (max (abs (- x1 x2))
        (abs (- y1 y2))))
 
@@ -66,7 +66,7 @@
   (if (and (= x1 x2) (= y1 y2))
     (make-array 1 :initial-element (cons x1 y1) :fill-pointer 1)
     (iterate
-      (with distance = (distance x1 y1 x2 y2))
+      (with distance = (line-distance x1 y1 x2 y2))
       (with points = (1+ distance))
       (with result = (make-array points :fill-pointer 0))
       (repeat points)
@@ -224,10 +224,58 @@
 (define-aspect brain)
 
 
+;;; Destructible
+(define-aspect destructible
+  (current-hp :type integer :initform 1)
+  (maximum-hp :type integer :initform 1)
+  (armor :type integer :initform 0))
+
+
+(defmethod entity-created :after ((e destructible))
+  (setf (destructible/current-hp e)
+        (destructible/maximum-hp e)))
+
+(defun adjust-health (entity amount)
+  (incf (destructible/current-hp entity) amount)
+  (clampf (destructible/current-hp entity)
+          0 (destructible/maximum-hp entity)))
+
+(defun hurt (entity amount)
+  (adjust-health entity (- amount))
+  (when (zerop (destructible/current-hp entity))
+    (destroy-entity entity)))
+
+(defun heal (entity amount)
+  (adjust-health entity amount))
+
+;;; Attacker
+(define-aspect attacker
+  (damage :type list :initform '(1 6))
+  (penetration :type integer :initform 0))
+
+(defun attack (attacker defender)
+  (let* ((damage (apply #'d (attacker/damage attacker)))
+         (armor (max 0 (- (destructible/armor defender)
+                          (attacker/penetration attacker))))
+         (total (- damage armor)))
+    (if (zerop total)
+      (format t "~A hit ~A, but didn't get past the armor.~%"
+              (flavor/name attacker)
+              (flavor/name defender))
+      (format t "~A hit ~(~A~) for ~D damage!~%"
+              (flavor/name attacker)
+              (flavor/name defender)
+              total))
+    (hurt defender total)))
+
+(defun alivep (entity)
+  (plusp (destructible/current-hp entity)))
+
+
 ;;;; Entities -----------------------------------------------------------------
 
 ;;;; Monsters
-(define-entity monster (loc renderable flavor brain))
+(define-entity monster (loc renderable flavor brain destructible attacker))
 
 (defun create-goblin (x y)
   (create-entity 'monster
@@ -235,7 +283,9 @@
     :loc/y y
     :renderable/glyph #\g
     :renderable/color (blt:rgba 0 255 0)
-    :flavor/name "A goblin"))
+    :flavor/name "A goblin"
+    :destructible/maximum-hp 10
+    :attacker/damage '(1 4 -1)))
 
 (defun create-orc (x y)
   (create-entity 'monster
@@ -243,7 +293,11 @@
     :loc/y y
     :renderable/glyph #\o
     :renderable/color (blt:rgba 0 200 80)
-    :flavor/name "An orc"))
+    :flavor/name "An orc"
+    :destructible/maximum-hp 15
+    :destructible/armor 1
+    :attacker/penetration 1
+    :attacker/damage '(1 6)))
 
 (defun create-troll (x y)
   (create-entity 'monster
@@ -251,18 +305,22 @@
     :loc/y y
     :renderable/glyph #\T
     :renderable/color (blt:rgba 0 180 0)
-    :flavor/name "A troll"))
+    :flavor/name "A troll"
+    :destructible/maximum-hp 40
+    :attacker/damage '(2 3 +1)))
 
 
 ;;; Player
-(define-entity player (loc renderable flavor))
+(define-entity player (loc renderable flavor destructible attacker))
 
 (defun create-player ()
   (create-entity 'player
     :loc/x 0 ; loc will be set later, after map generation
     :loc/y 0
     :renderable/glyph #\@
-    :flavor/name "You"))
+    :flavor/name "You"
+    :destructible/maximum-hp 30
+    :attacker/damage '(1 8)))
 
 
 ;;;; Game Logic ---------------------------------------------------------------
@@ -277,12 +335,17 @@
   (or (tile-blocks-movement-p (map-ref? x y))
       (object-at x y)))
 
-(defun move (entity x y)
+(defun move-to (entity x y)
   (if (or (not (in-bounds-p x y))
           (blockedp x y))
     nil
     (progn (loc-move-entity entity x y)
            t)))
+
+(defun move (entity dx dy)
+  (move-to entity
+           (+ dx (loc/x entity))
+           (+ dy (loc/y entity))))
 
 
 (defun place-player-initial ()
@@ -290,13 +353,13 @@
     (rl.bsp::random-room-point (random-room))))
 
 
-(defun player-move (x y)
+(defun player-move-to (x y)
   (prog1
-      (move *player* x y)
+      (move-to *player* x y)
     (recompute-fov)))
 
 (defun player-attack (target)
-  (pr 'attacking (flavor/name target))
+  (attack *player* target)
   t)
 
 (defun player-move-or-attack (dx dy)
@@ -305,7 +368,31 @@
          (target (object-at tx ty)))
     (if target
       (player-attack target)
-      (player-move tx ty))))
+      (player-move-to tx ty))))
+
+
+(defun distance (x1 y1 x2 y2)
+  (sqrt (+ (square (- x1 x2))
+           (square (- y1 y2)))))
+
+(defun distance-to (entity other)
+  (distance (loc/x entity)
+            (loc/y entity)
+            (loc/x other)
+            (loc/y other)))
+
+(defun delta-toward (ox oy tx ty)
+  (let* ((dx (- tx ox))
+         (dy (- ty oy))
+         (distance (sqrt (+ (square dx) (square dy)))))
+    (values (round (/ dx distance))
+            (round (/ dy distance)))))
+
+(defun move-toward (entity x y)
+  (multiple-value-call #'move entity
+    (delta-toward (loc/x entity)
+                  (loc/y entity)
+                  x y)))
 
 
 ;;;; Systems ------------------------------------------------------------------
@@ -333,7 +420,12 @@
 (defvar *turn* 0)
 
 (define-system act ((entity brain))
-  entity)
+  (when (visiblep (loc/x entity) (loc/y entity))
+    (cond
+      ((>= (distance-to entity *player*) 2)
+       (move-toward entity (loc/x *player*) (loc/y *player*)))
+      ((alivep *player*)
+       (attack entity *player*)))))
 
 (defun tick ()
   (incf *turn*)
@@ -489,14 +581,22 @@
          (format nil "turn ~D" *turn*)
          :width 10
          :halign :right)
-  (print 0 (- *screen-height* 4)
+  (print 15 (- *screen-height* 4)
          (format nil "F1: Refresh Config~%~
                       F2: Toggle Tiles~%~
                       F3: Toggle Mouse~%~
                       F4: Rebuild World"))
-  (print 15 (- *screen-height* 4)
+  (print 30 (- *screen-height* 4)
          (format nil "F5: Reveal Map~3%~
-                      ESC: Quit")))
+                      ESC: Quit"))
+  (setf (blt:color) (blt:hsva (map-range 0 (destructible/maximum-hp *player*)
+                                         0.0 0.3
+                                         (destructible/current-hp *player*))
+                              1.0 1.0))
+  (print 0 (- *screen-height* 4)
+         (format nil "HP: ~D/~D"
+                 (destructible/current-hp *player*)
+                 (destructible/maximum-hp *player*))))
 
 (defun draw ()
   (blt:clear)
@@ -562,6 +662,7 @@
       (:numpad-2 :move-down)
       (:numpad-3 :move-down-right)
       (:numpad-4 :move-left)
+      (:numpad-5 :wait)
       (:numpad-6 :move-right)
       (:numpad-7 :move-up-left)
       (:numpad-8 :move-up)
@@ -600,6 +701,8 @@
     (:move-up-right   (values t (player-move-or-attack  1 -1)))
     (:move-down-left  (values t (player-move-or-attack -1  1)))
     (:move-down-right (values t (player-move-or-attack  1  1)))
+
+    (:wait (values t t))
 
     (:quit (setf *running* (values nil nil)))))
 
