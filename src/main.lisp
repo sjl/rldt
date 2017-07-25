@@ -24,6 +24,7 @@
 (defparameter *layer-mobs* 3)
 (defparameter *layer-player* 4)
 (defparameter *layer-mouse* 5)
+(defparameter *layer-overlay* 10)
 
 
 (defvar *mouse-x* 0)
@@ -31,6 +32,8 @@
 
 (defvar *enable-tiles* nil)
 (defvar *show-mouse?* t)
+
+(defvar *game-state* :running)
 
 (defparameter *assets-directory* "./assets/")
 
@@ -341,6 +344,10 @@
 ;;; Player
 (define-entity player (loc renderable flavor destructible attacker solid))
 
+(defun kill-player (player)
+  (declare (ignore player))
+  (setf *game-state* :dead))
+
 (defun create-player ()
   (create-entity 'player
     :loc/x 0 ; loc will be set later, after map generation
@@ -349,6 +356,7 @@
     :renderable/layer *layer-player*
     :flavor/name "You"
     :destructible/maximum-hp 30
+    :destructible/on-death #'kill-player
     :attacker/damage '(1 8)))
 
 
@@ -470,6 +478,9 @@
   (concatenate 'string *assets-directory* filename))
 
 (defun config-fonts ()
+  (blt:set "simple font: ~A, size=~Dx~:*~D, spacing=1x1;"
+           (asset-path "ProggySquare/ProggySquare.ttf")
+           (floor *cell-size* 2))
   (blt:set "font: ~A, size=~Dx~:*~D, spacing=2x2;"
            (asset-path "ProggySquare/ProggySquare.ttf")
            *cell-size*)
@@ -533,6 +544,7 @@
 
 
 (defun generate ()
+  (setf *game-state* :running)
   (clear-entities)
   (initialize-locations)
   (generate-map)
@@ -631,12 +643,23 @@
                  (destructible/current-hp *player*)
                  (destructible/maximum-hp *player*))))
 
+(defun draw-state ()
+  (ecase *game-state*
+    (:running nil)
+    (:dead
+     (setf (blt:font) "simple")
+     (blt:draw-box *layer-overlay* 0 0 30 6 "")
+     (blt:draw-box (1+ *layer-overlay*) 0 0 30 6
+                   (format nil "[font=text]You have died.~%Press space to play again.")
+                   :background-color nil :border nil))))
+
 (defun draw ()
   (blt:clear)
   (draw-map)
   (run-render)
   (draw-mouse)
   (draw-status)
+  (draw-state)
   (blt:refresh))
 
 
@@ -679,34 +702,41 @@
 
 (defun read-event ()
   (if (blt:has-input-p)
-    (blt:key-case (blt:read)
-      (:f1 :refresh-config)
-      (:f2 :flip-tiles)
-      (:f3 :flip-mouse)
-      (:f4 :regenerate-world)
-      (:f5 :reveal-map)
+    (let ((event (blt:read)))
+      (blt:key-case event
+        (:f1 :refresh-config)
+        (:f2 :flip-tiles)
+        (:f3 :flip-mouse)
+        (:f4 :regenerate-world)
+        (:f5 :reveal-map)
 
-      (:up :move-up)
-      (:down :move-down)
-      (:left :move-left)
-      (:right :move-right)
+        (:escape :quit)
+        (:close :quit)
 
-      (:numpad-1 :move-down-left)
-      (:numpad-2 :move-down)
-      (:numpad-3 :move-down-right)
-      (:numpad-4 :move-left)
-      (:numpad-5 :wait)
-      (:numpad-6 :move-right)
-      (:numpad-7 :move-up-left)
-      (:numpad-8 :move-up)
-      (:numpad-9 :move-up-right)
+        (:mouse-move :mouse-move)
+        (:mouse-left :toggle-wall)
+        (:mouse-right :warp-player)
 
-      (:mouse-move :mouse-move)
-      (:mouse-left :toggle-wall)
-      (:mouse-right :warp-player)
+        (t (ecase *game-state*
+             (:running
+              (blt:key-case event
+                (:up :move-up)
+                (:down :move-down)
+                (:left :move-left)
+                (:right :move-right)
 
-      (:escape :quit)
-      (:close :quit))
+                (:numpad-1 :move-down-left)
+                (:numpad-2 :move-down)
+                (:numpad-3 :move-down-right)
+                (:numpad-4 :move-left)
+                (:numpad-5 :wait)
+                (:numpad-6 :move-right)
+                (:numpad-7 :move-up-left)
+                (:numpad-8 :move-up)
+                (:numpad-9 :move-up-right)))
+             (:dead
+              (blt:key-case event
+                (:space :regenerate-world)))))))
     :done))
 
 (defun handle-event (event)
@@ -725,6 +755,7 @@
     (:toggle-wall (toggle-wall) (values t nil))
     (:regenerate-world (generate) (values t nil))
     (:warp-player (warp-player) (values t nil))
+    (:quit (setf *running* (values nil nil)))
 
     (:move-up         (values t (player-move-or-attack  0 -1)))
     (:move-down       (values t (player-move-or-attack  0  1)))
@@ -735,9 +766,7 @@
     (:move-down-left  (values t (player-move-or-attack -1  1)))
     (:move-down-right (values t (player-move-or-attack  1  1)))
 
-    (:wait (values t t))
-
-    (:quit (setf *running* (values nil nil)))))
+    (:wait (heal *player* 1) (values t t))))
 
 (defun handle-events ()
   (iterate
