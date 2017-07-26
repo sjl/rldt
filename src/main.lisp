@@ -31,7 +31,6 @@
 (defvar *mouse-y* 0)
 
 (defvar *enable-tiles* nil)
-(defvar *show-mouse?* t)
 
 (defvar *game-state* :running)
 
@@ -609,6 +608,21 @@
               +color-dark-ground+))))
 
 
+(defun draw-mouselook ()
+  (when (and (in-bounds-p *mouse-x* *mouse-y*)
+             (visiblep *mouse-x* *mouse-y*))
+    (setf (blt:layer) *layer-mouse*
+          (blt:color) (blt:hsva 0.0 0.0 1.0 0.4)
+          (blt:font) ""
+          (cell-char *mouse-x* *mouse-y*) #\full_block)
+    (setf (blt:color) (blt:hsva 0.0 0.0 1.0)
+          (blt:font) "text")
+    (print 0 (- *screen-height* 5)
+           (format nil "~{~A~^, ~}"
+                   (-<> (mouse-objects)
+                     (remove-if-not #'flavor? <>)
+                     (mapcar #'flavor/name <>))))))
+
 (defun draw-messages ()
   (print (1+ *bar-width*) (- *screen-height* 4)
          (format nil "~{~A~^~%~}"
@@ -642,17 +656,6 @@
                (setf (tile-seen tile) t))
              (when (or visible seen)
                (draw-tile tile x y visible)))))
-
-(defun draw-mouse ()
-  (when *show-mouse?*
-    (setf (blt:layer) *layer-mouse*
-          (blt:color) (blt:hsva 1.0 0.0 1.0 0.5))
-    (iterate
-      (for (x . y) :in-vector (line (loc/x *player*) (loc/y *player*)
-                                    *mouse-x* *mouse-y*))
-      (setf (cell-char x y) #\full_block))
-    (setf (blt:color) (blt:hsva 1.0 0.0 1.0 0.8)
-          (cell-char *mouse-x* *mouse-y*) #\full_block)))
 
 (defun draw-status ()
   (setf (blt:color) (blt:rgba 1.0 1.0 1.0)
@@ -696,8 +699,8 @@
   (blt:clear)
   (draw-map)
   (run-render)
-  (draw-mouse)
   (draw-status)
+  (draw-mouselook)
   (draw-state)
   (blt:refresh))
 
@@ -715,6 +718,10 @@
 
 (defun mouse-tile ()
   (multiple-value-call #'aref *map* (mouse-coords)))
+
+(defun mouse-objects ()
+  (lref *mouse-x* *mouse-y*))
+
 
 (defun toggle-wall ()
   (multiple-value-bind (x y) (mouse-coords)
@@ -745,9 +752,8 @@
       (blt:key-case event
         (:f1 :refresh-config)
         (:f2 :flip-tiles)
-        (:f3 :flip-mouse)
+        (:f3 :reveal-map)
         (:f4 :regenerate-world)
-        (:f5 :reveal-map)
 
         (:escape :quit)
         (:close :quit)
@@ -788,7 +794,6 @@
   (ecase event
     (:refresh-config (config) (values t nil))
     (:flip-tiles (notf *enable-tiles*) (config) (values t))
-    (:flip-mouse (notf *show-mouse?*) (update-mouse-location) (values t nil))
     (:mouse-move (update-mouse-location) (values t nil))
     (:reveal-map (reveal-map) (values t nil))
     (:toggle-wall (toggle-wall) (values t nil))
