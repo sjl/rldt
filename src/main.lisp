@@ -12,10 +12,10 @@
 
 (defparameter *max-monsters-per-room* 3)
 
-(defconstant +color-light-wall+ (blt:hsva 1.0 0.0 0.7))
-(defconstant +color-light-ground+ (blt:hsva 1.0 0.0 0.5))
-(defconstant +color-dark-wall+ (blt:hsva 1.0 0.0 0.4))
-(defconstant +color-dark-ground+ (blt:hsva 1.0 0.0 0.3))
+(defconstant +color-light-wall+ (blt:white :value 0.7))
+(defconstant +color-light-ground+ (blt:white :value 0.5))
+(defconstant +color-dark-wall+ (blt:white :value 0.4))
+(defconstant +color-dark-ground+ (blt:white :value 0.3))
 
 
 (defparameter *layer-bg* 0)
@@ -181,7 +181,7 @@
 ;;; Renderable
 (define-aspect renderable
   (glyph :type character :initform #\?)
-  (color :initform (blt:hsva 0.0 0.0 1.0))
+  (color :initform (blt:white))
   (layer :type layer :initform *layer-mobs*))
 
 
@@ -445,7 +445,7 @@
       (setf (blt:layer) (renderable/layer entity)
             (blt:font) "tile"
             (blt:composition) t
-            (blt:color) (blt:hsva 0 0 0)
+            (blt:color) (blt:black)
             (cell-char x y) #\full_block
             (blt:color) (renderable/color entity)
             (cell-char x y) (renderable/glyph entity)
@@ -612,10 +612,10 @@
   (when (and (in-bounds-p *mouse-x* *mouse-y*)
              (visiblep *mouse-x* *mouse-y*))
     (setf (blt:layer) *layer-mouse*
-          (blt:color) (blt:hsva 0.0 0.0 1.0 0.4)
+          (blt:color) (blt:white :alpha 0.4)
           (blt:font) ""
           (cell-char *mouse-x* *mouse-y*) #\full_block)
-    (setf (blt:color) (blt:hsva 0.0 0.0 1.0)
+    (setf (blt:color) (blt:white)
           (blt:font) "text")
     (print 0 (- *screen-height* 5)
            (format nil "~{~A~^, ~}"
@@ -658,7 +658,7 @@
                (draw-tile tile x y visible)))))
 
 (defun draw-status ()
-  (setf (blt:color) (blt:rgba 1.0 1.0 1.0)
+  (setf (blt:color) (blt:white)
         (blt:font) "text")
   (print (- *screen-width* 10)
          (- *screen-height* 1)
@@ -671,18 +671,18 @@
               (format nil "HP: ~D/~D" cur-hp max-hp)
               cur-hp
               max-hp
-              (blt:rgba 0 200 0)
-              (blt:rgba 200 0 0)
-              (blt:rgba 255 255 255)))
+              (blt:green :value 0.8)
+              (blt:red :value 0.7)
+              (blt:white)))
   (let ((cur-xp 50)
         (max-xp 100))
     (draw-bar 0 (- *screen-height* 3) *bar-width*
               (format nil "XP: ~D/~D" cur-xp max-xp)
               cur-xp
               max-xp
-              (blt:hsva 0.15 1.0 0.8)
-              (blt:hsva 0.0 0.0 0.5)
-              (blt:rgba 255 255 255)))
+              (blt:yellow :value 0.8)
+              (blt:gray)
+              (blt:white)))
   (draw-messages))
 
 (defun draw-state ()
