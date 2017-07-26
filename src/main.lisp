@@ -277,13 +277,13 @@
                           (attacker/penetration attacker))))
          (total (- damage armor)))
     (if (zerop total)
-      (format t "~A hit ~A, but didn't get past the armor.~%"
-              (flavor/name attacker)
-              (flavor/name defender))
-      (format t "~A hit ~(~A~) for ~D damage!~%"
-              (flavor/name attacker)
-              (flavor/name defender)
-              total))
+      (message (format nil "~A hit ~A, but didn't get past the armor."
+                       (flavor/name attacker)
+                       (flavor/name defender)))
+      (message (format nil "~A hit ~(~A~) for ~D damage!"
+                       (flavor/name attacker)
+                       (flavor/name defender)
+                       total)))
     (hurt defender total)))
 
 (defun alivep (entity)
@@ -544,7 +544,8 @@
 
 
 (defun generate ()
-  (setf *game-state* :running)
+  (setf *game-state* :running
+        *messages* nil)
   (clear-entities)
   (initialize-locations)
   (generate-map)
@@ -553,6 +554,7 @@
   (place-player-initial)
   (rebuild-map-glyphs)
   (recompute-fov)
+  (message "Welcome to the game, good luck!")
   (values))
 
 
@@ -583,7 +585,20 @@
                #'opaquep #'mark-visible))
 
 
+;;;; Message Log --------------------------------------------------------------
+(defvar *messages* nil)
+
+(defparameter *messages-width* 30)
+(defparameter *messages-height* 4)
+
+(defun message (string)
+  (push string *messages*)
+  (zapf *messages* (take *messages-height* %)))
+
+
 ;;;; Rendering ----------------------------------------------------------------
+(defparameter *bar-width* 10)
+
 (defun tile-color (tile visible?)
   (etypecase tile
     (wall (if visible?
@@ -592,6 +607,27 @@
     (ground (if visible?
               +color-light-ground+
               +color-dark-ground+))))
+
+
+(defun draw-messages ()
+  (print (1+ *bar-width*) (- *screen-height* 4)
+         (format nil "~{~A~^~%~}"
+                 (reverse *messages*))
+         :width *messages-width*
+         :height *messages-height*
+         :valign :bottom))
+
+(defun draw-bar (x y width string value maximum bar-color background-color text-color)
+  (setf (blt:font) "text"
+        (blt:color) background-color)
+  (print x y (make-string (* 2 width) :initial-element #\full_block))
+  (setf (blt:color) bar-color)
+  (print x y (make-string (floor (map-range 0 maximum 0 (* 2 width) value))
+                          :initial-element #\full_block))
+  (setf (blt:color) text-color
+        (blt:composition) t)
+  (print x y string :width width :halign :center)
+  (setf (blt:composition) nil))
 
 (defun draw-map ()
   (setf (blt:layer) *layer-bg*
@@ -626,22 +662,25 @@
          (format nil "turn ~D" *turn*)
          :width 10
          :halign :right)
-  (print 15 (- *screen-height* 4)
-         (format nil "F1: Refresh Config~%~
-                      F2: Toggle Tiles~%~
-                      F3: Toggle Mouse~%~
-                      F4: Rebuild World"))
-  (print 30 (- *screen-height* 4)
-         (format nil "F5: Reveal Map~3%~
-                      ESC: Quit"))
-  (setf (blt:color) (blt:hsva (map-range 0 (destructible/maximum-hp *player*)
-                                         0.0 0.3
-                                         (destructible/current-hp *player*))
-                              1.0 1.0))
-  (print 0 (- *screen-height* 4)
-         (format nil "HP: ~D/~D"
-                 (destructible/current-hp *player*)
-                 (destructible/maximum-hp *player*))))
+  (let ((cur-hp (destructible/current-hp *player*))
+        (max-hp (destructible/maximum-hp *player*)))
+    (draw-bar 0 (- *screen-height* 4) *bar-width*
+              (format nil "HP: ~D/~D" cur-hp max-hp)
+              cur-hp
+              max-hp
+              (blt:rgba 0 200 0)
+              (blt:rgba 200 0 0)
+              (blt:rgba 255 255 255)))
+  (let ((cur-xp 50)
+        (max-xp 100))
+    (draw-bar 0 (- *screen-height* 3) *bar-width*
+              (format nil "XP: ~D/~D" cur-xp max-xp)
+              cur-xp
+              max-xp
+              (blt:hsva 0.15 1.0 0.8)
+              (blt:hsva 0.0 0.0 0.5)
+              (blt:rgba 255 255 255)))
+  (draw-messages))
 
 (defun draw-state ()
   (ecase *game-state*
