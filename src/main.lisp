@@ -595,6 +595,31 @@
   (zapf *messages* (take *messages-height* %)))
 
 
+;;;; Pathfinding --------------------------------------------------------------
+(defun find-path (x1 y1 x2 y2)
+  (when (and (in-bounds-p x1 y1)
+             (in-bounds-p x2 y2))
+    (let ((start (complex x1 y1)) ; ugly vec2s
+          (goal (complex x2 y2)))
+      (mapcar (lambda (point)
+                (cons (realpart point) (imagpart point)))
+              (a* :start start
+                  :neighbors (lambda (coords)
+                               (iterate
+                                 (for (dx dy) :within-radius 1 :skip-origin t)
+                                 (for x = (+ (realpart coords) dx))
+                                 (for y = (+ (imagpart coords) dy))
+                                 (when (and (in-bounds-p x y)
+                                            (not (blockedp x y)))
+                                   (collect (complex x y)))))
+                  :goal-p (lambda (coords)
+                            (= coords goal))
+                  :cost (lambda (c1 c2)
+                          (abs (- c1 c2)))
+                  :heuristic (lambda (coords)
+                               (abs (- coords goal))))))))
+
+
 ;;;; Rendering ----------------------------------------------------------------
 (defparameter *bar-width* 10)
 
@@ -608,7 +633,15 @@
               +color-dark-ground+))))
 
 
+(defun draw-mousepath ()
+  (setf (blt:color) (blt:red :alpha 0.8)
+        (blt:font) "")
+  (iterate (for (x . y) :in (find-path (loc/x *player*) (loc/y *player*)
+                                       *mouse-x* *mouse-y*))
+           (setf (cell-char x y) #\full_block)))
+
 (defun draw-mouselook ()
+  (draw-mousepath)
   (when (and (in-bounds-p *mouse-x* *mouse-y*)
              (visiblep *mouse-x* *mouse-y*))
     (setf (blt:layer) *layer-mouse*

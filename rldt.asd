@@ -21,4 +21,5 @@
                 ((:file "utils")
                  (:file "field-of-view")
                  (:file "binary-space-partitioning")
+                 (:file "a-star")
                  (:file "main")))))
