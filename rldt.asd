@@ -6,10 +6,12 @@
   :license "MIT/X11"
 
   :depends-on (:beast
+               :bordeaux-threads
                :cl-blt
                :cl-pcg
                :iterate
-               :losh)
+               :losh
+               :pileup)
 
   :serial t
   :components ((:module "vendor" :serial t
@@ -22,4 +24,5 @@
                  (:file "field-of-view")
                  (:file "binary-space-partitioning")
                  (:file "a-star")
+                 (:file "panels")
                  (:file "main")))))

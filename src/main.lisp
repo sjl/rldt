@@ -62,26 +62,6 @@
        (in-range-p 0 y *map-height*)))
 
 
-;;;; Lines --------------------------------------------------------------------
-(defun-inline line-distance (x1 y1 x2 y2)
-  (max (abs (- x1 x2))
-       (abs (- y1 y2))))
-
-(defun line (x1 y1 x2 y2)
-  (if (and (= x1 x2) (= y1 y2))
-    (make-array 1 :initial-element (cons x1 y1) :fill-pointer 1)
-    (iterate
-      (with distance = (line-distance x1 y1 x2 y2))
-      (with points = (1+ distance))
-      (with result = (make-array points :fill-pointer 0))
-      (repeat points)
-      (for n :from 0.0 :by (/ 1.0 distance))
-      (vector-push (cons (round (lerp x1 x2 n))
-                         (round (lerp y1 y2 n)))
-                   result)
-      (finally (return result)))))
-
-
 ;;;; Tiles --------------------------------------------------------------------
 (defclass* tile ()
   ((glyph :initform #\? :type character)
@@ -472,41 +452,6 @@
   (run-act))
 
 
-;;;; Config -------------------------------------------------------------------
-(defun asset-path (filename)
-  (concatenate 'string *assets-directory* filename))
-
-(defun config-fonts ()
-  (blt:set "simple font: ~A, size=~Dx~:*~D, spacing=1x1;"
-           (asset-path "ProggySquare/ProggySquare.ttf")
-           (floor *cell-size* 2))
-  (blt:set "font: ~A, size=~Dx~:*~D, spacing=2x2;"
-           (asset-path "ProggySquare/ProggySquare.ttf")
-           *cell-size*)
-  (blt:set "tile font: ~A, size=16x16, resize=~Dx~:*~D, codepage=437, spacing=2x2;"
-           (asset-path "df.png")
-           *cell-size*)
-  (blt:set "text font: ~A, size=~Dx~D, spacing=1x2;"
-           (asset-path "UbuntuMono/UbuntuMono-R.ttf")
-           *cell-size*
-           *cell-size*)
-  (when *enable-tiles*
-    (blt:set "tile 0x0000: ~A, size=16x16, resize=~Dx~:*~D, align=dead-center, codepage=~A, spacing=2x2;"
-             (asset-path "tiles.png")
-             *cell-size*
-             (asset-path "codepage.txt"))))
-
-(defun config ()
-  (assert (evenp *cell-size*))
-  (blt:set (format nil "window.size = ~Dx~D" (* 2 *screen-width*) (* 2 *screen-height*)))
-  (blt:set "window.title = /r/roguelikedev")
-  (blt:set "window.cellsize = ~Dx~:*~D" (floor *cell-size* 2))
-  (blt:set "output.vsync = true")
-  (blt:set "input.filter = keyboard, mouse")
-  (config-fonts)
-  (setf *running* t))
-
-
 ;;;; Generation ---------------------------------------------------------------
 (defparameter *monster-selection*
   (make-weightlist '((60 . goblin)
@@ -620,6 +565,47 @@
                                (abs (- coords goal))))))))
 
 
+;;;; Mouse --------------------------------------------------------------------
+(defun update-mouse-location ()
+  (multiple-value-bind (x y)
+      (blt:mouse)
+    (setf *mouse-x* (floor x 2)
+          *mouse-y* (floor y 2))))
+
+
+(defun mouse-coords ()
+  (values *mouse-x* *mouse-y*))
+
+(defun mouse-tile ()
+  (multiple-value-call #'aref *map* (mouse-coords)))
+
+(defun mouse-objects ()
+  (lref *mouse-x* *mouse-y*))
+
+
+;;;; God Mode -----------------------------------------------------------------
+(defun toggle-wall ()
+  (multiple-value-bind (x y) (mouse-coords)
+    (when (in-bounds-p x y)
+      (setf (aref *map* x y)
+            (if (typep (aref *map* x y) 'wall)
+              (make-ground)
+              (make-wall)))
+      (recompute-fov)
+      (rebuild-map-glyphs))))
+
+(defun warp-player ()
+  (multiple-value-bind (x y) (mouse-coords)
+    (when (in-bounds-p x y)
+      (setf (loc/x *player*) x
+            (loc/y *player*) y)
+      (recompute-fov))))
+
+(defun reveal-map ()
+  (do-array (tile *map*)
+    (setf (tile-seen tile) t)))
+
+
 ;;;; Rendering ----------------------------------------------------------------
 (defparameter *bar-width* 10)
 
@@ -722,10 +708,10 @@
   (ecase *game-state*
     (:running nil)
     (:dead
-     (setf (blt:font) "simple")
-     (blt:draw-box *layer-overlay* 0 0 30 6 "")
-     (blt:draw-box (1+ *layer-overlay*) 0 0 30 6
-                   (format nil "[font=text]You have died.~%Press space to play again.")
+     (setf (blt:font) "simple"
+           (blt:layer) *layer-overlay*)
+     (blt:draw-box 0 0 30 6
+                   :contents (format nil "[font=text]You have died.~%Press space to play again.")
                    :background-color nil :border nil))))
 
 (defun draw ()
@@ -739,46 +725,6 @@
 
 
 ;;;; Input --------------------------------------------------------------------
-(defun update-mouse-location ()
-  (multiple-value-bind (x y)
-      (blt:mouse)
-    (setf *mouse-x* (floor x 2)
-          *mouse-y* (floor y 2))))
-
-
-(defun mouse-coords ()
-  (values *mouse-x* *mouse-y*))
-
-(defun mouse-tile ()
-  (multiple-value-call #'aref *map* (mouse-coords)))
-
-(defun mouse-objects ()
-  (lref *mouse-x* *mouse-y*))
-
-
-(defun toggle-wall ()
-  (multiple-value-bind (x y) (mouse-coords)
-    (when (in-bounds-p x y)
-      (setf (aref *map* x y)
-            (if (typep (aref *map* x y) 'wall)
-              (make-ground)
-              (make-wall)))
-      (recompute-fov)
-      (rebuild-map-glyphs))))
-
-(defun warp-player ()
-  (multiple-value-bind (x y) (mouse-coords)
-    (when (in-bounds-p x y)
-      (setf (loc/x *player*) x
-            (loc/y *player*) y)
-      (recompute-fov))))
-
-
-(defun reveal-map ()
-  (do-array (tile *map*)
-    (setf (tile-seen tile) t)))
-
-
 (defun read-event ()
   (if (blt:has-input-p)
     (let ((event (blt:read)))
@@ -854,6 +800,130 @@
       (when needs-tick (tick))
       (oring needs-redraw))))
 
+
+;;;; Config -------------------------------------------------------------------
+(defun asset-path (filename)
+  (concatenate 'string *assets-directory* filename))
+
+(defun config-fonts ()
+  (blt:set "simple font: ~A, size=~Dx~:*~D, spacing=1x1;"
+           (asset-path "ProggySquare/ProggySquare.ttf")
+           (floor *cell-size* 2))
+  (blt:set "font: ~A, size=~Dx~:*~D, spacing=2x2;"
+           (asset-path "ProggySquare/ProggySquare.ttf")
+           *cell-size*)
+  (blt:set "tile font: ~A, size=16x16, resize=~Dx~:*~D, codepage=437, spacing=2x2;"
+           (asset-path "df.png")
+           *cell-size*)
+  (blt:set "text font: ~A, size=~Dx~D, spacing=1x2;"
+           (asset-path "UbuntuMono/UbuntuMono-R.ttf")
+           *cell-size*
+           *cell-size*)
+  (when *enable-tiles*
+    (blt:set "tile 0x0000: ~A, size=16x16, resize=~Dx~:*~D, align=dead-center, codepage=~A, spacing=2x2;"
+             (asset-path "tiles.png")
+             *cell-size*
+             (asset-path "codepage.txt"))))
+
+(defun config ()
+  (assert (evenp *cell-size*))
+  (blt:set (format nil "window.size = ~Dx~D" (* 2 *screen-width*) (* 2 *screen-height*)))
+  (blt:set "window.title = /r/roguelikedev")
+  (blt:set "window.cellsize = ~Dx~:*~D" (floor *cell-size* 2))
+  (blt:set "window.resizeable = true")
+  (blt:set "output.vsync = true")
+  (blt:set "input.filter = keyboard, mouse")
+  (config-fonts)
+  (setf *running* t))
+
+
+;;;; Synchronized Queues ------------------------------------------------------
+(defstruct (synchronized-queue (:include queue))
+  (lock (bt:make-recursive-lock)))
+
+(defun enqueue-sync (item queue)
+  (bt:with-recursive-lock-held ((synchronized-queue-lock queue))
+    (enqueue item queue)))
+
+(defun dequeue-sync (queue)
+  (bt:with-recursive-lock-held ((synchronized-queue-lock queue))
+    (dequeue queue)))
+
+
+;;;; State Machine ------------------------------------------------------------
+(defun blit ()
+  (blt:clear)
+  (rl.panels::draw-panels)
+  (blt:refresh))
+
+(defun draw-generate-message (panel)
+  (rl.panels::print panel 0 0 "[font=text]Generating dungeon..."
+                    :width (blt:width)
+                    :height (blt:height)
+                    :halign :center
+                    :valign :center))
+
+(defun sample-generate ()
+  (generate)
+  (sleep 10.0))
+
+(defun read-event ()
+  (when (blt:has-input-p)
+    (blt:read)))
+
+(defparameter *event-queue* nil)
+(defparameter *dirty* t)
+(defvar *game-thread* nil)
+
+(defun mark-dirty ()
+  (setf *dirty* t))
+
+(defun handle-ui-event (event)
+  (when (rl.panels::handle-event-for-panels event)
+    (mark-dirty))
+  (blt:key-case event
+    (:mouse-move (update-mouse-location) (mark-dirty))
+    (:close (setf *running* nil))))
+
+(defun pump-events ()
+  (iterate
+    (for event = (read-event))
+    (while event)
+    (handle-ui-event event)
+    (enqueue-sync event *event-queue*)))
+
+(defun draw-or-sleep ()
+  (if *dirty*
+    (progn
+      (setf *dirty* nil)
+      (blit))
+    (progn
+      (blt:sleep 1/100))))
+
+(defun ui-thread ()
+  (iterate
+    (draw-or-sleep)
+    (pump-events)
+    (while *running*)))
+
+(defun game-thread ()
+  (unwind-protect
+      (state-generate)
+    (setf *running* nil)))
+
+(defun state-generate ()
+  (rl.panels::with-panel (p (rl.panels::stretch) #'draw-generate-message)
+    (sample-generate)))
+
+(defun run-game ()
+  (blt:with-terminal
+    (setf (blt:color) (blt:white)
+          *event-queue* (make-synchronized-queue)
+          *running* t
+          *dirty* t)
+    (config)
+    (setf *game-thread* (bt:make-thread #'game-thread))
+    (ui-thread)))
 
 ;;;; Main Loop ----------------------------------------------------------------
 (defun run ()

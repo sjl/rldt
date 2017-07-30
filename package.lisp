@@ -29,6 +29,18 @@
   (:export
     :a*))
 
+(defpackage :rl.panels
+  (:use
+    :cl
+    :iterate
+    :losh
+    :rl.utils
+    :rl.quickutils)
+  (:export
+    )
+  (:shadow
+   :print))
+
 (defpackage :rl
   (:use
     :cl
