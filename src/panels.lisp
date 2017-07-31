@@ -117,6 +117,11 @@
      (recompute-panels-information)
      t)))
 
+;;;; Initialization -----------------------------------------------------------
+(defun initialize-panels ()
+  (setf *screen-width* (blt:width)
+        *screen-height* (blt:height)))
+
 
 ;;;; Printing -----------------------------------------------------------------
 (defun compute-coordinates (panel x y)

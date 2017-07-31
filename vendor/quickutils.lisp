@@ -2,7 +2,7 @@
 ;;;; See http://quickutil.org for details.
 
 ;;;; To regenerate:
-;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:WITH-GENSYMS :CURRY :RCURRY :MAP-TREE :ENSURE-BOOLEAN) :ensure-package T :package "RL.QUICKUTILS")
+;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:WITH-GENSYMS :CURRY :RCURRY :MAP-TREE :ONCE-ONLY :ENSURE-BOOLEAN) :ensure-package T :package "RL.QUICKUTILS")
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (find-package "RL.QUICKUTILS")
@@ -15,7 +15,7 @@
 (when (boundp '*utilities*)
   (setf *utilities* (union *utilities* '(:STRING-DESIGNATOR :WITH-GENSYMS
                                          :MAKE-GENSYM-LIST :ENSURE-FUNCTION
-                                         :CURRY :RCURRY :MAP-TREE
+                                         :CURRY :RCURRY :MAP-TREE :ONCE-ONLY
                                          :ENSURE-BOOLEAN))))
 
   (deftype string-designator ()
@@ -128,11 +128,51 @@ with and `arguments` to `function`."
       (rec tree)))
   
 
+  (defmacro once-only (specs &body forms)
+    "Evaluates `forms` with symbols specified in `specs` rebound to temporary
+variables, ensuring that each initform is evaluated only once.
+
+Each of `specs` must either be a symbol naming the variable to be rebound, or of
+the form:
+
+    (symbol initform)
+
+Bare symbols in `specs` are equivalent to
+
+    (symbol symbol)
+
+Example:
+
+    (defmacro cons1 (x) (once-only (x) `(cons ,x ,x)))
+      (let ((y 0)) (cons1 (incf y))) => (1 . 1)"
+    (let ((gensyms (make-gensym-list (length specs) "ONCE-ONLY"))
+          (names-and-forms (mapcar (lambda (spec)
+                                     (etypecase spec
+                                       (list
+                                        (destructuring-bind (name form) spec
+                                          (cons name form)))
+                                       (symbol
+                                        (cons spec spec))))
+                                   specs)))
+      ;; bind in user-macro
+      `(let ,(mapcar (lambda (g n) (list g `(gensym ,(string (car n)))))
+              gensyms names-and-forms)
+         ;; bind in final expansion
+         `(let (,,@(mapcar (lambda (g n)
+                             ``(,,g ,,(cdr n)))
+                           gensyms names-and-forms))
+            ;; bind in user-macro
+            ,(let ,(mapcar (lambda (n g) (list (car n) g))
+                    names-and-forms gensyms)
+               ,@forms)))))
+  
+
   (defun ensure-boolean (x)
     "Convert `x` into a Boolean value."
     (and x t))
   
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (export '(with-gensyms with-unique-names curry rcurry map-tree ensure-boolean)))
+  (export '(with-gensyms with-unique-names curry rcurry map-tree once-only
+            ensure-boolean)))
 
 ;;;; END OF quickutils.lisp ;;;;

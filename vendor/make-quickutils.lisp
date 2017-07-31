@@ -8,6 +8,7 @@
                :curry
                :rcurry
                :map-tree
+               :once-only
                :ensure-boolean
 
                )

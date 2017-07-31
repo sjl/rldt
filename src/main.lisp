@@ -17,6 +17,8 @@
 (defconstant +color-dark-wall+ (blt:white :value 0.4))
 (defconstant +color-dark-ground+ (blt:white :value 0.3))
 
+(defparameter *status-width* 10)
+(defparameter *status-height* 5)
 
 (defparameter *layer-bg* 0)
 (defparameter *layer-items* 1)
@@ -26,6 +28,9 @@
 (defparameter *layer-mouse* 5)
 (defparameter *layer-overlay* 10)
 
+(defvar *map-panel* nil)
+(defvar *status-panel* nil)
+(defvar *message-panel* nil)
 
 (defvar *mouse-x* 0)
 (defvar *mouse-y* 0)
@@ -416,21 +421,7 @@
 
 
 ;;;; Systems ------------------------------------------------------------------
-
 ;;; Rendering
-(defun draw-entity (entity)
-  (let ((x (loc/x entity))
-        (y (loc/y entity)))
-    (when (visiblep x y)
-      (setf (blt:layer) (renderable/layer entity)
-            (blt:font) "tile"
-            (blt:composition) t
-            (blt:color) (blt:black)
-            (cell-char x y) #\full_block
-            (blt:color) (renderable/color entity)
-            (cell-char x y) (renderable/glyph entity)
-            (blt:composition) nil)))
-  (values))
 
 (define-system render ((entity renderable loc))
   (draw-entity entity))
@@ -606,201 +597,6 @@
     (setf (tile-seen tile) t)))
 
 
-;;;; Rendering ----------------------------------------------------------------
-(defparameter *bar-width* 10)
-
-(defun tile-color (tile visible?)
-  (etypecase tile
-    (wall (if visible?
-            +color-light-wall+
-            +color-dark-wall+))
-    (ground (if visible?
-              +color-light-ground+
-              +color-dark-ground+))))
-
-
-(defun draw-mousepath ()
-  (setf (blt:color) (blt:red :alpha 0.8)
-        (blt:font) "")
-  (iterate (for (x . y) :in (find-path (loc/x *player*) (loc/y *player*)
-                                       *mouse-x* *mouse-y*))
-           (setf (cell-char x y) #\full_block)))
-
-(defun draw-mouselook ()
-  (draw-mousepath)
-  (when (and (in-bounds-p *mouse-x* *mouse-y*)
-             (visiblep *mouse-x* *mouse-y*))
-    (setf (blt:layer) *layer-mouse*
-          (blt:color) (blt:white :alpha 0.4)
-          (blt:font) ""
-          (cell-char *mouse-x* *mouse-y*) #\full_block)
-    (setf (blt:color) (blt:white)
-          (blt:font) "text")
-    (print 0 (- *screen-height* 5)
-           (format nil "~{~A~^, ~}"
-                   (-<> (mouse-objects)
-                     (remove-if-not #'flavor? <>)
-                     (mapcar #'flavor/name <>))))))
-
-(defun draw-messages ()
-  (print (1+ *bar-width*) (- *screen-height* 4)
-         (format nil "~{~A~^~%~}"
-                 (reverse *messages*))
-         :width *messages-width*
-         :height *messages-height*
-         :valign :bottom))
-
-(defun draw-bar (x y width string value maximum bar-color background-color text-color)
-  (setf (blt:font) "text"
-        (blt:color) background-color)
-  (print x y (make-string (* 2 width) :initial-element #\full_block))
-  (setf (blt:color) bar-color)
-  (print x y (make-string (floor (map-range 0 maximum 0 (* 2 width) value))
-                          :initial-element #\full_block))
-  (setf (blt:color) text-color
-        (blt:composition) t)
-  (print x y string :width width :halign :center)
-  (setf (blt:composition) nil))
-
-(defun draw-map ()
-  (setf (blt:layer) *layer-bg*
-        (blt:font) "tile")
-  (flet ((draw-tile (tile x y visible)
-           (setf (blt:color) (tile-color tile visible)
-                 (cell-char x y) (tile-glyph tile))))
-    (iterate (for (tile x y) :in-array *map*)
-             (for visible = (aref *fov-map* x y))
-             (for seen = (tile-seen tile))
-             (when (and visible (not seen))
-               (setf (tile-seen tile) t))
-             (when (or visible seen)
-               (draw-tile tile x y visible)))))
-
-(defun draw-status ()
-  (setf (blt:color) (blt:white)
-        (blt:font) "text")
-  (print (- *screen-width* 10)
-         (- *screen-height* 1)
-         (format nil "turn ~D" *turn*)
-         :width 10
-         :halign :right)
-  (let ((cur-hp (destructible/current-hp *player*))
-        (max-hp (destructible/maximum-hp *player*)))
-    (draw-bar 0 (- *screen-height* 4) *bar-width*
-              (format nil "HP: ~D/~D" cur-hp max-hp)
-              cur-hp
-              max-hp
-              (blt:green :value 0.8)
-              (blt:red :value 0.7)
-              (blt:white)))
-  (let ((cur-xp 50)
-        (max-xp 100))
-    (draw-bar 0 (- *screen-height* 3) *bar-width*
-              (format nil "XP: ~D/~D" cur-xp max-xp)
-              cur-xp
-              max-xp
-              (blt:yellow :value 0.8)
-              (blt:gray)
-              (blt:white)))
-  (draw-messages))
-
-(defun draw-state ()
-  (ecase *game-state*
-    (:running nil)
-    (:dead
-     (setf (blt:font) "simple"
-           (blt:layer) *layer-overlay*)
-     (blt:draw-box 0 0 30 6
-                   :contents (format nil "[font=text]You have died.~%Press space to play again.")
-                   :background-color nil :border nil))))
-
-(defun draw ()
-  (blt:clear)
-  (draw-map)
-  (run-render)
-  (draw-status)
-  (draw-mouselook)
-  (draw-state)
-  (blt:refresh))
-
-
-;;;; Input --------------------------------------------------------------------
-(defun read-event ()
-  (if (blt:has-input-p)
-    (let ((event (blt:read)))
-      (blt:key-case event
-        (:f1 :refresh-config)
-        (:f2 :flip-tiles)
-        (:f3 :reveal-map)
-        (:f4 :regenerate-world)
-
-        (:escape :quit)
-        (:close :quit)
-
-        (:mouse-move :mouse-move)
-        (:mouse-left :toggle-wall)
-        (:mouse-right :warp-player)
-
-        (t (ecase *game-state*
-             (:running
-              (blt:key-case event
-                (:up :move-up)
-                (:down :move-down)
-                (:left :move-left)
-                (:right :move-right)
-
-                (:numpad-1 :move-down-left)
-                (:numpad-2 :move-down)
-                (:numpad-3 :move-down-right)
-                (:numpad-4 :move-left)
-                (:numpad-5 :wait)
-                (:numpad-6 :move-right)
-                (:numpad-7 :move-up-left)
-                (:numpad-8 :move-up)
-                (:numpad-9 :move-up-right)))
-             (:dead
-              (blt:key-case event
-                (:space :regenerate-world)))))))
-    :done))
-
-(defun handle-event (event)
-  "Handle the given event.
-
-  Returns two values: whether the screen needs to be redrawn, and whether the
-  game time should be ticked.
-
-  "
-  (ecase event
-    (:refresh-config (config) (values t nil))
-    (:flip-tiles (notf *enable-tiles*) (config) (values t))
-    (:mouse-move (update-mouse-location) (values t nil))
-    (:reveal-map (reveal-map) (values t nil))
-    (:toggle-wall (toggle-wall) (values t nil))
-    (:regenerate-world (generate) (values t nil))
-    (:warp-player (warp-player) (values t nil))
-    (:quit (setf *running* (values nil nil)))
-
-    (:move-up         (values t (player-move-or-attack  0 -1)))
-    (:move-down       (values t (player-move-or-attack  0  1)))
-    (:move-left       (values t (player-move-or-attack -1  0)))
-    (:move-right      (values t (player-move-or-attack  1  0)))
-    (:move-up-left    (values t (player-move-or-attack -1 -1)))
-    (:move-up-right   (values t (player-move-or-attack  1 -1)))
-    (:move-down-left  (values t (player-move-or-attack -1  1)))
-    (:move-down-right (values t (player-move-or-attack  1  1)))
-
-    (:wait (heal *player* 1) (values t t))))
-
-(defun handle-events ()
-  (iterate
-    (for event = (read-event))
-    (until (eql event :done))
-    (when event
-      (for (values needs-redraw needs-tick) = (handle-event event))
-      (when needs-tick (tick))
-      (oring needs-redraw))))
-
-
 ;;;; Config -------------------------------------------------------------------
 (defun asset-path (filename)
   (concatenate 'string *assets-directory* filename))
@@ -833,111 +629,331 @@
   (blt:set "window.resizeable = true")
   (blt:set "output.vsync = true")
   (blt:set "input.filter = keyboard, mouse")
-  (config-fonts)
-  (setf *running* t))
+  (config-fonts))
 
 
-;;;; Synchronized Queues ------------------------------------------------------
-(defstruct (synchronized-queue (:include queue))
-  (lock (bt:make-recursive-lock)))
-
-(defun enqueue-sync (item queue)
-  (bt:with-recursive-lock-held ((synchronized-queue-lock queue))
-    (enqueue item queue)))
-
-(defun dequeue-sync (queue)
-  (bt:with-recursive-lock-held ((synchronized-queue-lock queue))
-    (dequeue queue)))
-
-
-;;;; State Machine ------------------------------------------------------------
+;;;; UI -----------------------------------------------------------------------
 (defun blit ()
   (blt:clear)
   (rl.panels::draw-panels)
   (blt:refresh))
 
-(defun draw-generate-message (panel)
-  (rl.panels::print panel 0 0 "[font=text]Generating dungeon..."
-                    :width (blt:width)
-                    :height (blt:height)
-                    :halign :center
-                    :valign :center))
-
-(defun sample-generate ()
-  (generate)
-  (sleep 10.0))
-
 (defun read-event ()
   (when (blt:has-input-p)
     (blt:read)))
 
-(defparameter *event-queue* nil)
-(defparameter *dirty* t)
-(defvar *game-thread* nil)
+(defun handle-basic-event (event)
+  (let ((panels? (rl.panels::handle-event-for-panels event))
+        (other? (blt:key-case event
+                  (:mouse-move (update-mouse-location) t)
+                  (:f7 (cerror "It's fine." "BORK") nil) ; explode
+                  (:f8 t) ; force blit
+                  (:close (setf *running* nil) t))))
+    (or panels? other?)))
 
-(defun mark-dirty ()
-  (setf *dirty* t))
-
-(defun handle-ui-event (event)
-  (when (rl.panels::handle-event-for-panels event)
-    (mark-dirty))
-  (blt:key-case event
-    (:mouse-move (update-mouse-location) (mark-dirty))
-    (:close (setf *running* nil))))
-
-(defun pump-events ()
-  (iterate
-    (for event = (read-event))
-    (while event)
-    (handle-ui-event event)
-    (enqueue-sync event *event-queue*)))
-
-(defun draw-or-sleep ()
-  (if *dirty*
-    (progn
-      (setf *dirty* nil)
+(defun get-event ()
+  (when-let* ((event (read-event)))
+    (when (handle-basic-event event)
       (blit))
-    (progn
-      (blt:sleep 1/100))))
+    event))
 
-(defun ui-thread ()
+(defun get-event-blocking ()
   (iterate
-    (draw-or-sleep)
-    (pump-events)
-    (while *running*)))
+    (for event = (get-event))
+    (if event
+      (return event)
+      (blt:sleep 1/60))))
 
-(defun game-thread ()
-  (unwind-protect
-      (state-generate)
-    (setf *running* nil)))
+(defmacro event-case (&body clauses)
+  `(blt:key-case (get-event) ,@clauses))
 
-(defun state-generate ()
-  (rl.panels::with-panel (p (rl.panels::stretch) #'draw-generate-message)
-    (sample-generate)))
+(defmacro event-case-blocking (&body clauses)
+  `(iterate (thereis (blt:key-case (get-event-blocking) ,@clauses))))
 
-(defun run-game ()
-  (blt:with-terminal
+
+;;;; State Machine ------------------------------------------------------------
+(defmacro define-state-machine-macros ()
+  (with-gensyms (next-state transition recur main)
+    `(progn
+       (defmacro define-state (state-name &body body)
+         `(defun ,state-name ()
+            (let (,',next-state)
+              (tagbody
+                (go ,',main)
+                ,',recur (return-from ,state-name (funcall ',state-name))
+                ,',transition (return-from ,state-name (funcall ,',next-state))
+                ,',main ,@body))))
+
+       (defmacro transition (next-state)
+         `(progn (setf ,',next-state ',next-state) (go ,',transition)))
+
+       (defmacro reenter ()
+         `(go ,',recur)))))
+
+(define-state-machine-macros)
+
+
+;;;; Drawing ------------------------------------------------------------------
+(defun centered (width height)
+  (let ((w (* 2 width))
+        (h (* 2 height)))
+    (lambda (width height)
+      (values (floor (- width w) 2)
+              (floor (- height h) 2)
+              w h))))
+
+(defun draw-bar (panel x y width string value maximum bar-color background-color text-color)
+  (setf (blt:font) "text"
+        (blt:color) background-color)
+  (rl.panels::print panel (* 2 x) (* 2 y)
+                    (make-string (* 2 width) :initial-element #\full_block))
+  (setf (blt:color) bar-color)
+  (rl.panels::print panel (* 2 x) (* 2 y)
+                    (make-string (floor (map-range 0 maximum 0 (* 2 width) value))
+                                 :initial-element #\full_block))
+  (setf (blt:color) text-color
+        (blt:composition) t)
+  (rl.panels::print panel (* 2 x) (* 2 y) string :width (* 2 width) :halign :center)
+  (setf (blt:composition) nil))
+
+
+(defun draw-message-box (contents width height panel)
+  (rl.panels::print panel 1 1 contents
+                    :width (- (* 2 width) 2)
+                    :height (- (* 2 height) 2)
+                    :halign :center
+                    :valign :center))
+
+(defmacro with-message-box ((width height contents) &body body)
+  (once-only (width height)
+    `(rl.panels::with-panel (,(gensym)
+                             (centered ,width ,height)
+                             (curry 'draw-message-box ,contents ,width ,height)
+                             :background-color (blt:black :alpha 0.5)
+                             :border :light)
+       (blit)
+       ,@body)))
+
+
+(defun draw-generate-message (panel)
+  (rl.panels::print panel 0 0 "Generating world..."
+                    :width (rl.panels::panel-width panel)
+                    :height (rl.panels::panel-height panel)
+                    :halign :center
+                    :valign :center))
+
+
+(defun tile-color (tile visible?)
+  (etypecase tile
+    (wall (if visible?
+            +color-light-wall+
+            +color-dark-wall+))
+    (ground (if visible?
+              +color-light-ground+
+              +color-dark-ground+))))
+
+(defun draw-entity (entity)
+  (let ((x (loc/x entity))
+        (y (loc/y entity)))
+    (when (visiblep x y)
+      (setf (blt:font) "tile"
+            (blt:composition) t
+            (blt:color) (blt:black)
+            (rl.panels::cell-char *map-panel* (* 2 x) (* 2 y)) #\full_block
+            (blt:color) (renderable/color entity)
+            (rl.panels::cell-char *map-panel* (* 2 x) (* 2 y)) (renderable/glyph entity)
+            (blt:composition) nil)))
+  (values))
+
+(defun draw-map (panel)
+  (setf (blt:font) "tile")
+  (flet ((draw-tile (tile x y visible)
+           (setf (blt:color) (tile-color tile visible)
+                 (rl.panels::cell-char panel (* 2 x) (* 2 y)) (tile-glyph tile))))
+    ;; todo: pull the exploration part of this out into the main game logic
+    (iterate (for (tile x y) :in-array *map*)
+             (for visible = (aref *fov-map* x y))
+             (for seen = (tile-seen tile))
+             (when (and visible (not seen))
+               (setf (tile-seen tile) t))
+             (when (or visible seen)
+               (draw-tile tile x y visible))))
+  (run-render)
+  (draw-entity *player*))
+
+
+(defun draw-messages (panel)
+  (rl.panels::print panel 0 (* 2 1)
+                    (format nil "~{~A~^~%~}"
+                            (reverse *messages*))
+                    :width (* 2 *messages-width*)
+                    :height (* 2 (1- *status-height*))
+                    :valign :bottom))
+
+
+(defun draw-status-look (panel)
+  (when (and (in-bounds-p *mouse-x* *mouse-y*)
+             (visiblep *mouse-x* *mouse-y*))
+    ;; todo: make an overlay panel
+    ;; (setf (blt:color) (blt:white :alpha 0.4)
+    ;;       (blt:font) ""
+    ;;       (cell-char *mouse-x* *mouse-y*) #\full_block)
     (setf (blt:color) (blt:white)
-          *event-queue* (make-synchronized-queue)
-          *running* t
-          *dirty* t)
-    (config)
-    (setf *game-thread* (bt:make-thread #'game-thread))
-    (ui-thread)))
+          (blt:font) "text")
+    (rl.panels::print panel 0 0
+           (format nil "~{~A~^, ~}"
+                   (-<> (mouse-objects)
+                     (remove-if-not #'flavor? <>)
+                     (mapcar #'flavor/name <>))))))
 
-;;;; Main Loop ----------------------------------------------------------------
+(defun draw-status (panel)
+  (draw-status-look panel)
+  (setf (blt:color) (blt:white)
+        (blt:font) "text")
+  (let ((cur-hp (destructible/current-hp *player*))
+        (max-hp (destructible/maximum-hp *player*)))
+    (draw-bar panel 0 1 *status-width*
+              (format nil "HP: ~D/~D" cur-hp max-hp)
+              cur-hp
+              max-hp
+              (blt:green :value 0.8)
+              (blt:red :value 0.7)
+              (blt:white)))
+  (let ((cur-xp 50)
+        (max-xp 100))
+    (draw-bar panel 0 2 *status-width*
+              (format nil "XP: ~D/~D" cur-xp max-xp)
+              cur-xp
+              max-xp
+              (blt:yellow :value 0.8)
+              (blt:gray)
+              (blt:white))))
+
+
+;;;; States -------------------------------------------------------------------
+;;;; Dead
+(define-state state-dead
+  (with-message-box (10 4 "You have died.")
+    (event-case-blocking
+      (:space (transition state-generate))
+      (:escape t))))
+
+
+;;;; Tick
+(define-state state-tick
+  (tick)
+  (transition state-play))
+
+
+;;;; Play
+(defun get-action-play ()
+  (event-case-blocking
+    (:f1 :refresh-config)
+    (:f2 :flip-tiles)
+    (:f3 :reveal-map)
+    (:f4 :regenerate-world)
+
+    (:escape :quit)
+    (:close :quit)
+
+    (:mouse-left :toggle-wall)
+    (:mouse-right :warp-player)
+
+    (:up :move-up)
+    (:down :move-down)
+    (:left :move-left)
+    (:right :move-right)
+
+    (:numpad-1 :move-down-left)
+    (:numpad-2 :move-down)
+    (:numpad-3 :move-down-right)
+    (:numpad-4 :move-left)
+    (:numpad-5 :wait)
+    (:numpad-6 :move-right)
+    (:numpad-7 :move-up-left)
+    (:numpad-8 :move-up)
+    (:numpad-9 :move-up-right)))
+
+(defmacro tick-if (&body body)
+  `(if (progn ,@body)
+     (transition state-tick)
+     (reenter)))
+
+
+(define-state state-play
+  (blit)
+
+  (when (eq *game-state* :dead)
+    (transition state-dead))
+
+  (ecase (get-action-play)
+    (:refresh-config (config) (reenter))
+    (:flip-tiles (notf *enable-tiles*) (config) (reenter))
+    (:reveal-map (reveal-map) (reenter))
+    (:toggle-wall (toggle-wall) (reenter))
+    (:regenerate-world (generate) (reenter))
+    (:warp-player (warp-player) (reenter))
+
+    (:quit (setf *running* nil))
+
+    (:move-up         (tick-if (player-move-or-attack  0 -1)))
+    (:move-down       (tick-if (player-move-or-attack  0  1)))
+    (:move-left       (tick-if (player-move-or-attack -1  0)))
+    (:move-right      (tick-if (player-move-or-attack  1  0)))
+    (:move-up-left    (tick-if (player-move-or-attack -1 -1)))
+    (:move-up-right   (tick-if (player-move-or-attack  1 -1)))
+    (:move-down-left  (tick-if (player-move-or-attack -1  1)))
+    (:move-down-right (tick-if (player-move-or-attack  1  1)))
+
+    (:wait (heal *player* 1) (transition state-tick))))
+
+
+;;;; Initialize
+(define-state state-initialize
+  (rl.panels::with-panels
+    ((*map-panel* (lambda (width height)
+                    (values 0 0 width (- height (* 2 *status-height*))))
+                  'draw-map)
+     (*status-panel* (lambda (width height)
+                       (declare (ignore width))
+                       (values 0 (- height (* 2 *status-height*))
+                               (* 2 *status-width*) (* 2 *status-height*)))
+                     'draw-status)
+     (*message-panel* (lambda (width height)
+                        (values (1+ (* 2 *status-width*))
+                                (- height (* 2 *status-height*))
+                                (- width (* 2 *status-width*) 1)
+                                (* 2 *status-height*)))
+                      'draw-messages))
+    ;; Just call normally, so these panels stick around til we quit.
+    (state-generate)))
+
+
+;;;; Generate
+(define-state state-generate
+  (rl.panels::with-panel (p (rl.panels::stretch) 'draw-generate-message)
+    (blit)
+    (iterate (with generator = (bt:make-thread #'generate))
+             (unless (bt:thread-alive-p generator)
+               (transition state-play))
+             (get-event)
+             (blt:sleep 1/60))))
+
+
+;;;; Start
+(define-state state-start
+  (transition state-initialize))
+
+
+;;;; Main ---------------------------------------------------------------------
 (defun run ()
   (blt:with-terminal
+    (setf (blt:color) (blt:white)
+          *running* t)
     (config)
-    (generate)
-    (blt:clear)
-    (iterate
-      (while *running*)
-      (if skip-draw
-        (sleep 1/60)
-        (draw))
-      (for had-events = (handle-events))
-      (for skip-draw = (not had-events)))))
+    (blit)
+    (rl.panels::initialize-panels)
+    (state-start)))
 
 
 ;;;; Entry --------------------------------------------------------------------
