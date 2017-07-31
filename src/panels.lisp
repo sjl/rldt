@@ -3,7 +3,10 @@
 ;;;; Data ---------------------------------------------------------------------
 (defparameter *panel-initial-layer* 0)
 (defparameter *panel-layer-width* 3)
-(defvar *panels* (make-array 10 :adjustable t :fill-pointer 0))
+(defvar *panels* (make-array 10
+                   :adjustable t
+                   :fill-pointer 0
+                   :initial-element nil))
 (defvar *screen-width* 60)
 (defvar *screen-height* 40)
 
@@ -15,6 +18,7 @@
    (width)
    (height)
    (layer)
+   (layers)
    (border)
    (border-color)
    (background-color)
@@ -22,13 +26,14 @@
    (draw-panel)))
 
 (defun make-panel (compute-geometry draw-panel
-                   &key border border-color background-color)
+                   &key border border-color background-color layers)
   (multiple-value-bind (x y width height)
       (funcall compute-geometry *screen-width* *screen-height*)
     (make-instance 'panel
       :x x :y y :width width :height height
       :compute-geometry compute-geometry
       :draw-panel draw-panel
+      :layers layers
       :border border
       :border-color border-color
       :background-color background-color)))
@@ -64,13 +69,20 @@
 
 
 ;;;; Stack Management ---------------------------------------------------------
+(defun vector-pop-harder (vector)
+  (prog1
+      (aref vector (decf (fill-pointer vector)))
+    (setf (aref vector (fill-pointer vector)) nil)))
+
 (defun push-panel (panel)
   (setf (panel-layer panel)
-        (+ *panel-initial-layer* (* *panel-layer-width* (length *panels*))))
+        (if-found (previous (vector-last *panels*))
+          (+ (panel-layer previous) (panel-layers previous))
+          *panel-initial-layer*))
   (vector-push-extend panel *panels*))
 
 (defun pop-panel (&optional intended-panel)
-  (let ((popped (vector-pop *panels*)))
+  (let ((popped (vector-pop-harder *panels*)))
     (when intended-panel
       (assert (eq intended-panel popped) ()
         "Popped a panel other than the one intended to be popped.")))
@@ -78,9 +90,10 @@
 
 (defmacro with-panel ((panel-name compute-geometry draw-panel &key
                                   border (border-color (blt:white))
-                                  background-color)
+                                  background-color (layers 2))
                       &body body)
   `(let ((,panel-name (make-panel ,compute-geometry ,draw-panel
+                                  :layers ,layers
                                   :border ,border
                                   :border-color ,border-color
                                   :background-color ,background-color)))

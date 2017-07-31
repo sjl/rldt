@@ -20,13 +20,11 @@
 (defparameter *status-width* 10)
 (defparameter *status-height* 5)
 
-(defparameter *layer-bg* 0)
+(defparameter *layer-tiles* 0)
 (defparameter *layer-items* 1)
 (defparameter *layer-corpses* 2)
 (defparameter *layer-mobs* 3)
 (defparameter *layer-player* 4)
-(defparameter *layer-mouse* 5)
-(defparameter *layer-overlay* 10)
 
 (defvar *map-panel* nil)
 (defvar *status-panel* nil)
@@ -756,13 +754,15 @@
   (let ((x (loc/x entity))
         (y (loc/y entity)))
     (when (visiblep x y)
+      (incf (blt:layer) (renderable/layer entity))
       (setf (blt:font) "tile"
             (blt:composition) t
             (blt:color) (blt:black)
             (rl.panels::cell-char *map-panel* (* 2 x) (* 2 y)) #\full_block
             (blt:color) (renderable/color entity)
             (rl.panels::cell-char *map-panel* (* 2 x) (* 2 y)) (renderable/glyph entity)
-            (blt:composition) nil)))
+            (blt:composition) nil)
+      (decf (blt:layer) (renderable/layer entity))))
   (values))
 
 (defun draw-map (panel)
@@ -778,8 +778,7 @@
                (setf (tile-seen tile) t))
              (when (or visible seen)
                (draw-tile tile x y visible))))
-  (run-render)
-  (draw-entity *player*))
+  (run-render))
 
 
 (defun draw-messages (panel)
@@ -913,7 +912,8 @@
   (rl.panels::with-panels
     ((*map-panel* (lambda (width height)
                     (values 0 0 width (- height (* 2 *status-height*))))
-                  'draw-map)
+                  'draw-map
+                  :layers 6)
      (*status-panel* (lambda (width height)
                        (declare (ignore width))
                        (values 0 (- height (* 2 *status-height*))
