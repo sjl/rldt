@@ -37,6 +37,7 @@
 (defvar *enable-tiles* nil)
 
 (defvar *game-state* :running)
+(defvar *world-ready* nil)
 
 (defparameter *assets-directory* "./assets/")
 
@@ -842,29 +843,31 @@
   (values))
 
 (defun draw-map (panel)
-  (setf (blt:font) "tile")
-  (flet ((draw-tile (tile x y visible)
-           (setf (blt:color) (tile-color tile visible)
-                 (rl.panels::cell-char panel (* 2 x) (* 2 y)) (tile-glyph tile))))
-    ;; todo: pull the exploration part of this out into the main game logic
-    (iterate (for (tile x y) :in-array *map*)
-             (for visible = (aref *fov-map* x y))
-             (for seen = (tile-seen tile))
-             (when (and visible (not seen))
-               (setf (tile-seen tile) t))
-             (when (or visible seen)
-               (draw-tile tile x y visible))))
-  (run-render))
+  (when *world-ready*
+    (setf (blt:font) "tile")
+    (flet ((draw-tile (tile x y visible)
+             (setf (blt:color) (tile-color tile visible)
+                   (rl.panels::cell-char panel (* 2 x) (* 2 y)) (tile-glyph tile))))
+      ;; todo: pull the exploration part of this out into the main game logic
+      (iterate (for (tile x y) :in-array *map*)
+               (for visible = (aref *fov-map* x y))
+               (for seen = (tile-seen tile))
+               (when (and visible (not seen))
+                 (setf (tile-seen tile) t))
+               (when (or visible seen)
+                 (draw-tile tile x y visible))))
+    (run-render)))
 
 
 (defun draw-messages (panel)
-  (setf (blt:font) "text")
-  (rl.panels::print panel 0 (* 2 1)
-                    (format nil "~{~A~^~%~}"
-                            (reverse *messages*))
-                    :width (* 2 *messages-width*)
-                    :height (* 2 (1- *status-height*))
-                    :valign :bottom))
+  (when *world-ready*
+    (setf (blt:font) "text")
+    (rl.panels::print panel 0 (* 2 1)
+                      (format nil "~{~A~^~%~}"
+                              (reverse *messages*))
+                      :width (* 2 *messages-width*)
+                      :height (* 2 (1- *status-height*))
+                      :valign :bottom)))
 
 
 (defun draw-status-look (panel)
@@ -883,27 +886,28 @@
                      (mapcar #'flavor/name <>))))))
 
 (defun draw-status (panel)
-  (draw-status-look panel)
-  (setf (blt:color) (blt:white)
-        (blt:font) "text")
-  (let ((cur-hp (destructible/current-hp *player*))
-        (max-hp (destructible/maximum-hp *player*)))
-    (draw-bar panel 0 1 *status-width*
-              (format nil "HP: ~D/~D" cur-hp max-hp)
-              cur-hp
-              max-hp
-              (blt:green :value 0.8)
-              (blt:red :value 0.7)
-              (blt:white)))
-  (let ((cur-xp 50)
-        (max-xp 100))
-    (draw-bar panel 0 2 *status-width*
-              (format nil "XP: ~D/~D" cur-xp max-xp)
-              cur-xp
-              max-xp
-              (blt:yellow :value 0.8)
-              (blt:gray)
-              (blt:white))))
+  (when *world-ready*
+    (draw-status-look panel)
+    (setf (blt:color) (blt:white)
+          (blt:font) "text")
+    (let ((cur-hp (destructible/current-hp *player*))
+          (max-hp (destructible/maximum-hp *player*)))
+      (draw-bar panel 0 1 *status-width*
+                (format nil "HP: ~D/~D" cur-hp max-hp)
+                cur-hp
+                max-hp
+                (blt:green :value 0.8)
+                (blt:red :value 0.7)
+                (blt:white)))
+    (let ((cur-xp 50)
+          (max-xp 100))
+      (draw-bar panel 0 2 *status-width*
+                (format nil "XP: ~D/~D" cur-xp max-xp)
+                cur-xp
+                max-xp
+                (blt:yellow :value 0.8)
+                (blt:gray)
+                (blt:white)))))
 
 
 (defun press-space-or-escape ()
@@ -1135,10 +1139,12 @@
 
 ;;;; Generate
 (define-state state-generate
+  (setf *world-ready* nil)
   (rl.panels::with-panel (p (rl.panels::stretch) 'draw-generate-message)
     (blit)
     (iterate (with generator = (bt:make-thread #'generate))
              (unless (bt:thread-alive-p generator)
+               (setf *world-ready* t)
                (transition state-play))
              (get-event)
              (blt:sleep 1/60))))
