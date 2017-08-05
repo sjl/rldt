@@ -320,6 +320,20 @@
   (return-item-to-world item container))
 
 
+(defmethod entity-destroyed :before ((entity containable))
+  (when-let* ((container (containable/container entity)))
+    (remove-item entity container)))
+
+
+;;;; Usable
+(define-aspect usable
+  (effect :type function))
+
+(defun use (item target)
+  (prog1 (funcall (usable/effect item) target)
+    (destroy-entity item)))
+
+
 ;;;; Entities -----------------------------------------------------------------
 
 ;;;; Corpses
@@ -392,7 +406,7 @@
 
 
 ;;;; Healing Potion
-(define-entity healing-potion (loc renderable flavor containable))
+(define-entity healing-potion (loc renderable flavor containable usable))
 
 (defun create-healing-potion (x y)
   (create-entity 'healing-potion
@@ -401,7 +415,12 @@
     :renderable/glyph #\!
     :renderable/color (blt:purple)
     :renderable/layer *layer-items*
-    :flavor/name "a healing potion"))
+    :flavor/name "a healing potion"
+    :usable/effect 'use-healing-potion))
+
+(defun use-healing-potion (target)
+  (when (destructible? target)
+    (heal target (d 3 6 +1))))
 
 
 ;;;; Game Logic ---------------------------------------------------------------
@@ -979,6 +998,7 @@
 
 
 ;;;; States -------------------------------------------------------------------
+;;;; Utils
 ;;;; Dead
 (define-state state-dead
   (with-message-box (20 6 "You have died.")
@@ -991,6 +1011,26 @@
   (tick)
   (transition state-play))
 
+
+;;;; Use
+(defun find-items-to-use ()
+  (remove-if-not #'usable? (container/contents *player*)))
+
+
+(define-state state-use
+  (let ((items (find-items-to-use)))
+    (if (null items)
+      (with-message-box (40 4 "You don't have anything you can use.")
+        (blit)
+        (press-space-or-escape)
+        (transition state-play))
+      (let ((choice (selection-menu "What would you like to use?"
+                                    items #'flavor/name)))
+        (if choice
+          (progn
+            (use choice *player*)
+            (transition state-tick))
+          (transition state-play))))))
 
 ;;;; Pick Up
 (defun find-items-to-pick-up ()
@@ -1074,7 +1114,8 @@
 
     (:d :drop)
     (:i :inventory)
-    (:g :get)))
+    (:g :get)
+    (:u :use)))
 
 (defmacro tick-if (&body body)
   `(if (progn ,@body)
@@ -1111,6 +1152,7 @@
       (:get (transition state-pick-up))
       (:drop (transition state-drop))
       (:inventory (transition state-inventory))
+      (:use (transition state-use))
 
       (:wait (heal *player* 1) (transition state-tick)))))
 
