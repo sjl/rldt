@@ -996,9 +996,22 @@
           ((< selection number-of-choices)
            (return-from selection-menu (elt choices selection))))))))
 
+(defmacro choose-and-do
+    ((prompt failure-message choice choices formatter) &body body)
+  (with-gensyms (choices-list)
+    `(let ((,choices-list ,choices))
+       (if (null ,choices-list)
+         (with-message-box (40 4 ,failure-message)
+           (blit)
+           (press-space-or-escape)
+           (transition state-play))
+         (let ((,choice (selection-menu ,prompt ,choices-list ,formatter)))
+           (if ,choice
+             (progn ,@body)
+             (transition state-play)))))))
+
 
 ;;;; States -------------------------------------------------------------------
-;;;; Utils
 ;;;; Dead
 (define-state state-dead
   (with-message-box (20 6 "You have died.")
@@ -1018,19 +1031,12 @@
 
 
 (define-state state-use
-  (let ((items (find-items-to-use)))
-    (if (null items)
-      (with-message-box (40 4 "You don't have anything you can use.")
-        (blit)
-        (press-space-or-escape)
-        (transition state-play))
-      (let ((choice (selection-menu "What would you like to use?"
-                                    items #'flavor/name)))
-        (if choice
-          (progn
-            (use choice *player*)
-            (transition state-tick))
-          (transition state-play))))))
+  (choose-and-do ("What would you like to use?"
+                  "You don't have anything you can use."
+                  choice (find-items-to-use) #'flavor/name)
+    (use choice *player*)
+    (transition state-tick)))
+
 
 ;;;; Pick Up
 (defun find-items-to-pick-up ()
@@ -1039,48 +1045,28 @@
 
 
 (define-state state-pick-up
-  (let ((items (find-items-to-pick-up)))
-    (if (null items)
-      (with-message-box (40 4 "There's nothing to pick up.")
-        (blit)
-        (press-space-or-escape)
-        (transition state-play))
-      (let ((choice (selection-menu "What would you like to pick up?"
-                                    items #'flavor/name)))
-        (if choice
-          (progn
-            (insert-item choice *player*)
-            (transition state-tick))
-          (transition state-play))))))
+  (choose-and-do ("What would you like to pick up?"
+                  "There's nothing to pick up."
+                  choice (find-items-to-pick-up) #'flavor/name)
+    (insert-item choice *player*)
+    (transition state-tick)))
 
 
 ;;;; Drop
 (define-state state-drop
-  (let ((items (container/contents *player*)))
-    (if (null items)
-      (with-message-box (40 4 "You don't have anything to drop.")
-        (blit)
-        (press-space-or-escape)
-        (transition state-play))
-      (let ((choice (selection-menu "What would you like to drop?"
-                                    items #'flavor/name)))
-        (if choice
-          (progn
-            (remove-item choice *player*)
-            (transition state-tick))
-          (transition state-play))))))
+  (choose-and-do ("What would you like to drop?"
+                  "You don't have anything to drop."
+                  choice (container/contents *player*) #'flavor/name)
+    (remove-item choice *player*)
+    (transition state-tick)))
 
 
 ;;;; Play
 (define-state state-inventory
-  (let ((items (container/contents *player*)))
-    (if (null items)
-      (with-message-box (40 4 "You're not carrying anything.")
-        (blit)
-        (press-space-or-escape)
-        (transition state-play))
-      (progn (selection-menu "Inventory" items #'flavor/name)
-             (transition state-play)))))
+  (choose-and-do ("You are carrying:"
+                  "You're not carrying anything."
+                  choice (container/contents *player*) #'flavor/name)
+    (transition state-play)))
 
 
 ;;;; Play
@@ -1091,7 +1077,7 @@
     (:f3 :reveal-map)
     (:f4 :regenerate-world)
 
-    ((or :close :escape) :quit)
+    ((or :close (:q :shift)) :quit)
 
     (:mouse-left :toggle-wall)
     (:mouse-right :warp-player)
