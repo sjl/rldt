@@ -11,6 +11,7 @@
 (defparameter *map-height* (- *screen-height* 5))
 
 (defparameter *max-monsters-per-room* 3)
+(defparameter *max-items-per-room* 2)
 
 (defconstant +color-light-wall+ (blt:white :value 0.7))
 (defconstant +color-light-ground+ (blt:white :value 0.5))
@@ -161,24 +162,24 @@
 
 ;;;; Aspects ------------------------------------------------------------------
 
-;;; Renderable
+;;;; Renderable
 (define-aspect renderable
   (glyph :type character :initform #\?)
   (color :initform (blt:white))
   (layer :type layer :initform *layer-mobs*))
 
 
-;;; Flavor
+;;;; Flavor
 (define-aspect flavor
   (name :type string :initform "Something"))
 
 
-;;; Locations
+;;;; Locations
 (defvar *locations* nil)
 
 (define-aspect loc
-  (x :type coordinate)
-  (y :type coordinate))
+  (x :type (or null coordinate))
+  (y :type (or null coordinate)))
 
 (defun initialize-locations ()
   (setf *locations* (make-array (list *map-width* *map-height*)
@@ -186,11 +187,13 @@
                       :element-type 'list)))
 
 (defun loc-insert-entity (e)
-  (push e (aref *locations* (loc/x e) (loc/y e))))
+  (when (loc/x e)
+    (push e (aref *locations* (loc/x e) (loc/y e)))))
 
 (defun loc-remove-entity (e)
-  (zapf (aref *locations* (loc/x e) (loc/y e))
-        (delete e %)))
+  (when (loc/y e)
+    (zapf (aref *locations* (loc/x e) (loc/y e))
+          (delete e %))))
 
 (defun loc-move-entity (e new-x new-y)
   (loc-remove-entity e)
@@ -208,15 +211,15 @@
   (loc-remove-entity entity))
 
 
-;;; Solid
+;;;; Solid
 (define-aspect solid)
 
 
-;;; Brains
+;;;; Brains
 (define-aspect brain)
 
 
-;;; Destructible
+;;;; Destructible
 (define-aspect destructible
   (current-hp :type integer :initform 1)
   (maximum-hp :type integer :initform 1)
@@ -248,7 +251,7 @@
   (adjust-health entity amount))
 
 
-;;; Attacker
+;;;; Attacker
 (define-aspect attacker
   (damage :type list :initform '(1 6))
   (penetration :type integer :initform 0))
@@ -270,6 +273,50 @@
 
 (defun alivep (entity)
   (plusp (destructible/current-hp entity)))
+
+
+;;;; Containers
+(define-aspect container
+  (contents :type list :initform nil)
+  (capacity :type fixnum :initform 26))
+
+
+(defun container-full-p (container)
+  (= (length (container/contents container))
+     (container/capacity container)))
+
+(defun container-empty-p (container)
+  (null (container/contents container)))
+
+
+;;;; Containable
+(define-aspect containable
+  (container :type (or null container) :initform nil))
+
+
+(defun remove-item-from-world (item)
+  (when (loc? item)
+    (loc-remove-entity item)
+    (setf (loc/x item) nil
+          (loc/y item) nil)))
+
+(defun return-item-to-world (item container)
+  (when (and (loc? item) (loc? container))
+    (setf (loc/x item) (loc/x container)
+          (loc/y item) (loc/y container))
+    (loc-insert-entity item)))
+
+(defun insert-item (item container)
+  (assert (not (container-full-p container)))
+  (push item (container/contents container))
+  (setf (containable/container item) container)
+  (remove-item-from-world item))
+
+(defun remove-item (item container)
+  (assert (member item (container/contents container)))
+  (removef (container/contents container) item)
+  (setf (containable/container item) container)
+  (return-item-to-world item container))
 
 
 ;;;; Entities -----------------------------------------------------------------
@@ -323,8 +370,9 @@
     :attacker/damage '(2 3 +1)))
 
 
-;;; Player
-(define-entity player (loc renderable flavor destructible attacker solid))
+;;;; Player
+(define-entity player
+  (loc renderable flavor destructible attacker solid container))
 
 (defun kill-player (player)
   (declare (ignore player))
@@ -340,6 +388,19 @@
     :destructible/maximum-hp 30
     :destructible/on-death #'kill-player
     :attacker/damage '(1 8)))
+
+
+;;;; Healing Potion
+(define-entity healing-potion (loc renderable flavor containable))
+
+(defun create-healing-potion (x y)
+  (create-entity 'healing-potion
+    :loc/x x
+    :loc/y y
+    :renderable/glyph #\!
+    :renderable/color (blt:purple)
+    :renderable/layer *layer-items*
+    :flavor/name "a healing potion"))
 
 
 ;;;; Game Logic ---------------------------------------------------------------
@@ -443,23 +504,36 @@
 
 ;;;; Generation ---------------------------------------------------------------
 (defparameter *monster-selection*
-  (make-weightlist '((60 . goblin)
-                     (30 . orc)
-                     (10 . troll))))
+  (make-weightlist '((60 . create-goblin)
+                     (30 . create-orc)
+                     (10 . create-troll))))
+
+(defparameter *item-selection*
+  (make-weightlist '((100 . create-healing-potion))))
 
 
 (defun create-random-monster (x y)
-  (ecase (weightlist-random *monster-selection*)
-    (goblin (create-goblin x y))
-    (orc (create-orc x y))
-    (troll (create-troll x y))))
+  (funcall (weightlist-random *monster-selection*) x y))
 
-(defun populate-room (room)
+(defun create-random-item (x y)
+  (funcall (weightlist-random *item-selection*) x y))
+
+
+(defun populate-room-with-monsters (room)
   (dorepeat (random (1+ *max-monsters-per-room*))
     (multiple-value-bind (x y)
         (rl.bsp::random-room-point room)
       (unless (blockedp x y)
         (create-random-monster x y)))))
+
+(defun populate-room-with-items (room)
+  (dorepeat (random (1+ *max-items-per-room*))
+    (multiple-value-call #'create-random-item
+      (rl.bsp::random-room-point room))))
+
+(defun populate-room (room)
+  (populate-room-with-monsters room)
+  (populate-room-with-items room))
 
 (defun populate-rooms ()
   (map nil #'populate-room *rooms*))
@@ -488,6 +562,7 @@
   (rebuild-map-glyphs)
   (recompute-fov)
   (message "Welcome to the game, good luck!")
+  (sleep 0.1)
   (values))
 
 
@@ -693,12 +768,10 @@
 
 ;;;; Drawing ------------------------------------------------------------------
 (defun centered (width height)
-  (let ((w (* 2 width))
-        (h (* 2 height)))
-    (lambda (width height)
-      (values (floor (- width w) 2)
-              (floor (- height h) 2)
-              w h))))
+  (lambda (w h)
+    (values (floor (- w width) 2)
+            (floor (- h height) 2)
+            width height)))
 
 (defun draw-bar (panel x y width string value maximum bar-color background-color text-color)
   (setf (blt:font) "text"
@@ -716,24 +789,27 @@
 
 
 (defun draw-message-box (contents width height panel)
+  (setf (blt:font) "text")
   (rl.panels::print panel 1 1 contents
-                    :width (- (* 2 width) 2)
-                    :height (- (* 2 height) 2)
+                    :width (- width 2)
+                    :height (- height 2)
                     :halign :center
                     :valign :center))
+
 
 (defmacro with-message-box ((width height contents) &body body)
   (once-only (width height)
     `(rl.panels::with-panel (,(gensym)
                              (centered ,width ,height)
                              (curry 'draw-message-box ,contents ,width ,height)
-                             :background-color (blt:black :alpha 0.5)
+                             :background-color (blt:black :alpha 0.7)
                              :border :light)
        (blit)
        ,@body)))
 
 
 (defun draw-generate-message (panel)
+  (setf (blt:font) "text")
   (rl.panels::print panel 0 0 "Generating world..."
                     :width (rl.panels::panel-width panel)
                     :height (rl.panels::panel-height panel)
@@ -753,7 +829,7 @@
 (defun draw-entity (entity)
   (let ((x (loc/x entity))
         (y (loc/y entity)))
-    (when (visiblep x y)
+    (when (and x y (visiblep x y))
       (incf (blt:layer) (renderable/layer entity))
       (setf (blt:font) "tile"
             (blt:composition) t
@@ -782,6 +858,7 @@
 
 
 (defun draw-messages (panel)
+  (setf (blt:font) "text")
   (rl.panels::print panel 0 (* 2 1)
                     (format nil "~{~A~^~%~}"
                             (reverse *messages*))
@@ -829,19 +906,137 @@
               (blt:white))))
 
 
+(defun press-space-or-escape ()
+  (event-case-blocking
+    ((or :escape :space) t)))
+
+
+(defun get-selection-event ()
+  ; ugh blt
+  (event-case-blocking
+    (:a 0)
+    (:b 1)
+    (:c 2)
+    (:d 3)
+    (:e 4)
+    (:f 5)
+    (:g 6)
+    (:h 7)
+    (:i 8)
+    (:j 9)
+    (:k 10)
+    (:l 11)
+    (:m 12)
+    (:n 13)
+    (:o 14)
+    (:p 15)
+    (:q 16)
+    (:r 17)
+    (:s 18)
+    (:t 19)
+    (:u 20)
+    (:v 21)
+    (:w 22)
+    (:x 23)
+    (:y 24)
+    (:z 25)
+    (:escape :nevermind)))
+
+(defun selection-menu (prompt choices format-function)
+  (let* ((number-of-choices (length choices))
+         (width)
+         (height)
+         (text (with-output-to-string (s)
+                 (format s "~A~2%" prompt)
+                 (iterate
+                   (for h :from 0)
+                   (for choice :in choices)
+                   (for choice-string = (funcall format-function choice))
+                   (for key :in-vector "abcdefghijklmnopqrstuvwxyz")
+                   (for string = (format nil "~A: ~A~%" key choice-string))
+                   (maximizing (1- (length string)) :into w)
+                   (princ string s)
+                   (finally (setf width (max w (length prompt))
+                                  height (+ 2 h)))))))
+    (rl.panels::with-panel (panel (centered (+ 4 width) (+ 4 (* 2 height)))
+                                  (lambda (panel)
+                                    (setf (blt:font) "text")
+                                    (rl.panels::print panel 2 2 text))
+                                  :border :double
+                                  :background-color (blt:black))
+      (iterate
+        (blit)
+        (for selection = (get-selection-event))
+        (cond
+          ((eq selection :nevermind)
+           (return-from selection-menu nil))
+          ((< selection number-of-choices)
+           (return-from selection-menu (elt choices selection))))))))
+
+
 ;;;; States -------------------------------------------------------------------
 ;;;; Dead
 (define-state state-dead
-  (with-message-box (10 4 "You have died.")
+  (with-message-box (20 6 "You have died.")
     (event-case-blocking
-      (:space (transition state-generate))
-      (:escape t))))
+      ((or :escape :space) (transition state-generate)))))
 
 
 ;;;; Tick
 (define-state state-tick
   (tick)
   (transition state-play))
+
+
+;;;; Pick Up
+(defun find-items-to-pick-up ()
+  (-<> (lref (loc/x *player*) (loc/y *player*))
+    (remove-if-not #'containable? <>)))
+
+
+(define-state state-pick-up
+  (let ((items (find-items-to-pick-up)))
+    (if (null items)
+      (with-message-box (40 4 "There's nothing to pick up.")
+        (blit)
+        (press-space-or-escape)
+        (transition state-play))
+      (let ((choice (selection-menu "What would you like to pick up?"
+                                    items #'flavor/name)))
+        (if choice
+          (progn
+            (insert-item choice *player*)
+            (transition state-tick))
+          (transition state-play))))))
+
+
+;;;; Drop
+(define-state state-drop
+  (let ((items (container/contents *player*)))
+    (if (null items)
+      (with-message-box (40 4 "You don't have anything to drop.")
+        (blit)
+        (press-space-or-escape)
+        (transition state-play))
+      (let ((choice (selection-menu "What would you like to drop?"
+                                    items #'flavor/name)))
+        (if choice
+          (progn
+            (remove-item choice *player*)
+            (transition state-tick))
+          (transition state-play))))))
+
+
+;;;; Play
+(define-state state-inventory
+  (let ((items (container/contents *player*)))
+    (if (null items)
+      (with-message-box (40 4 "You're not carrying anything.")
+        (blit)
+        (press-space-or-escape)
+        (transition state-play))
+      (progn (selection-menu "Inventory" items #'flavor/name)
+             (transition state-play)))))
 
 
 ;;;; Play
@@ -852,8 +1047,7 @@
     (:f3 :reveal-map)
     (:f4 :regenerate-world)
 
-    (:escape :quit)
-    (:close :quit)
+    ((or :close :escape) :quit)
 
     (:mouse-left :toggle-wall)
     (:mouse-right :warp-player)
@@ -862,6 +1056,7 @@
     (:down :move-down)
     (:left :move-left)
     (:right :move-right)
+    (:period :wait)
 
     (:numpad-1 :move-down-left)
     (:numpad-2 :move-down)
@@ -871,7 +1066,11 @@
     (:numpad-6 :move-right)
     (:numpad-7 :move-up-left)
     (:numpad-8 :move-up)
-    (:numpad-9 :move-up-right)))
+    (:numpad-9 :move-up-right)
+
+    (:d :drop)
+    (:i :inventory)
+    (:g :get)))
 
 (defmacro tick-if (&body body)
   `(if (progn ,@body)
@@ -885,26 +1084,31 @@
   (when (eq *game-state* :dead)
     (transition state-dead))
 
-  (ecase (get-action-play)
-    (:refresh-config (config) (reenter))
-    (:flip-tiles (notf *enable-tiles*) (config) (reenter))
-    (:reveal-map (reveal-map) (reenter))
-    (:toggle-wall (toggle-wall) (reenter))
-    (:regenerate-world (generate) (reenter))
-    (:warp-player (warp-player) (reenter))
+  (let ((action (get-action-play)))
+    (ccase action
+      (:refresh-config (config) (reenter))
+      (:flip-tiles (notf *enable-tiles*) (config) (reenter))
+      (:reveal-map (reveal-map) (reenter))
+      (:toggle-wall (toggle-wall) (reenter))
+      (:regenerate-world (transition state-generate))
+      (:warp-player (warp-player) (reenter))
 
-    (:quit (setf *running* nil))
+      (:quit (setf *running* nil))
 
-    (:move-up         (tick-if (player-move-or-attack  0 -1)))
-    (:move-down       (tick-if (player-move-or-attack  0  1)))
-    (:move-left       (tick-if (player-move-or-attack -1  0)))
-    (:move-right      (tick-if (player-move-or-attack  1  0)))
-    (:move-up-left    (tick-if (player-move-or-attack -1 -1)))
-    (:move-up-right   (tick-if (player-move-or-attack  1 -1)))
-    (:move-down-left  (tick-if (player-move-or-attack -1  1)))
-    (:move-down-right (tick-if (player-move-or-attack  1  1)))
+      (:move-up         (tick-if (player-move-or-attack  0 -1)))
+      (:move-down       (tick-if (player-move-or-attack  0  1)))
+      (:move-left       (tick-if (player-move-or-attack -1  0)))
+      (:move-right      (tick-if (player-move-or-attack  1  0)))
+      (:move-up-left    (tick-if (player-move-or-attack -1 -1)))
+      (:move-up-right   (tick-if (player-move-or-attack  1 -1)))
+      (:move-down-left  (tick-if (player-move-or-attack -1  1)))
+      (:move-down-right (tick-if (player-move-or-attack  1  1)))
 
-    (:wait (heal *player* 1) (transition state-tick))))
+      (:get (transition state-pick-up))
+      (:drop (transition state-drop))
+      (:inventory (transition state-inventory))
+
+      (:wait (heal *player* 1) (transition state-tick)))))
 
 
 ;;;; Initialize

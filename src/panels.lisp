@@ -2,7 +2,6 @@
 
 ;;;; Data ---------------------------------------------------------------------
 (defparameter *panel-initial-layer* 0)
-(defparameter *panel-layer-width* 3)
 (defvar *panels* (make-array 10
                    :adjustable t
                    :fill-pointer 0
@@ -13,17 +12,17 @@
 
 ;;;; Class --------------------------------------------------------------------
 (defclass* panel ()
-  ((x)
-   (y)
-   (width)
-   (height)
-   (layer)
-   (layers)
-   (border)
-   (border-color)
-   (background-color)
-   (compute-geometry)
-   (draw-panel)))
+  (x
+   y
+   width
+   height
+   layer
+   layers
+   border
+   border-color
+   background-color
+   compute-geometry
+   draw-panel))
 
 (defun make-panel (compute-geometry draw-panel
                    &key border border-color background-color layers)
@@ -130,6 +129,7 @@
      (recompute-panels-information)
      t)))
 
+
 ;;;; Initialization -----------------------------------------------------------
 (defun initialize-panels ()
   (setf *screen-width* (blt:width)
@@ -162,6 +162,7 @@
 
 ;;;; Drawing ------------------------------------------------------------------
 (defun draw-panel-box (panel)
+  (setf (blt:font) "simple")
   (blt:draw-box (panel-x panel) (panel-y panel)
                 (panel-width panel) (panel-height panel)
                 :border (panel-border panel)

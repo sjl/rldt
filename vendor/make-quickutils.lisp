@@ -4,12 +4,13 @@
   "quickutils.lisp"
   :utilities '(
 
-               :with-gensyms
                :curry
-               :rcurry
+               :ensure-boolean
                :map-tree
                :once-only
-               :ensure-boolean
+               :rcurry
+               :removef
+               :with-gensyms
 
                )
   :package "RL.QUICKUTILS")
