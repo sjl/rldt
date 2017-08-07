@@ -4,7 +4,9 @@
   "quickutils.lisp"
   :utilities '(
 
+               :conjoin
                :curry
+               :disjoin
                :ensure-boolean
                :map-tree
                :once-only

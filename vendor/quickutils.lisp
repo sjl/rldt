@@ -2,7 +2,7 @@
 ;;;; See http://quickutil.org for details.
 
 ;;;; To regenerate:
-;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:CURRY :ENSURE-BOOLEAN :MAP-TREE :ONCE-ONLY :RCURRY :REMOVEF :WITH-GENSYMS) :ensure-package T :package "RL.QUICKUTILS")
+;;;; (qtlc:save-utils-as "quickutils.lisp" :utilities '(:CONJOIN :CURRY :DISJOIN :ENSURE-BOOLEAN :MAP-TREE :ONCE-ONLY :RCURRY :REMOVEF :WITH-GENSYMS) :ensure-package T :package "RL.QUICKUTILS")
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (find-package "RL.QUICKUTILS")
@@ -13,10 +13,30 @@
 (in-package "RL.QUICKUTILS")
 
 (when (boundp '*utilities*)
-  (setf *utilities* (union *utilities* '(:MAKE-GENSYM-LIST :ENSURE-FUNCTION
-                                         :CURRY :ENSURE-BOOLEAN :MAP-TREE
-                                         :ONCE-ONLY :RCURRY :REMOVEF
-                                         :STRING-DESIGNATOR :WITH-GENSYMS))))
+  (setf *utilities* (union *utilities* '(:CONJOIN :MAKE-GENSYM-LIST
+                                         :ENSURE-FUNCTION :CURRY :DISJOIN
+                                         :ENSURE-BOOLEAN :MAP-TREE :ONCE-ONLY
+                                         :RCURRY :REMOVEF :STRING-DESIGNATOR
+                                         :WITH-GENSYMS))))
+
+  (defun conjoin (predicate &rest more-predicates)
+    "Returns a function that applies each of `predicate` and `more-predicate`
+functions in turn to its arguments, returning `nil` if any of the predicates
+returns false, without calling the remaining predicates. If none of the
+predicates returns false, returns the primary value of the last predicate."
+    (if (null more-predicates)
+        predicate
+        (lambda (&rest arguments)
+          (and (apply predicate arguments)
+               ;; Cannot simply use CL:EVERY because we want to return the
+               ;; non-NIL value of the last predicate if all succeed.
+               (do ((tail (cdr more-predicates) (cdr tail))
+                    (head (car more-predicates) (car tail)))
+                   ((not tail)
+                    (apply head arguments))
+                 (unless (apply head arguments)
+                   (return nil)))))))
+  
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun make-gensym-list (length &optional (x "G"))
     "Returns a list of `length` gensyms, each generated as if with a call to `make-gensym`,
@@ -59,6 +79,23 @@ it is called with to `function`."
          (declare (optimize (speed 3) (safety 1) (debug 1)))
          (lambda (&rest more)
            (apply ,fun ,@curries more)))))
+  
+
+  (defun disjoin (predicate &rest more-predicates)
+    "Returns a function that applies each of `predicate` and
+`more-predicate` functions in turn to its arguments, returning the
+primary value of the first predicate that returns true, without
+calling the remaining predicates. If none of the predicates returns
+true, `nil` is returned."
+    (declare (optimize (speed 3) (safety 1) (debug 1)))
+    (let ((predicate (ensure-function predicate))
+          (more-predicates (mapcar #'ensure-function more-predicates)))
+      (lambda (&rest arguments)
+        (or (apply predicate arguments)
+            (some (lambda (p)
+                    (declare (type function p))
+                    (apply p arguments))
+                  more-predicates)))))
   
 
   (defun ensure-boolean (x)
@@ -182,7 +219,7 @@ unique symbol the named variable will be bound to."
     `(with-gensyms ,names ,@forms))
   
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (export '(curry ensure-boolean map-tree once-only rcurry removef with-gensyms
-            with-unique-names)))
+  (export '(conjoin curry disjoin ensure-boolean map-tree once-only rcurry
+            removef with-gensyms with-unique-names)))
 
 ;;;; END OF quickutils.lisp ;;;;

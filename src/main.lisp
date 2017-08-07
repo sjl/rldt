@@ -12,6 +12,7 @@
 
 (defparameter *max-monsters-per-room* 3)
 (defparameter *max-items-per-room* 2)
+(defparameter *fireball-range* 4)
 (defparameter *lightning-range* 8)
 (defparameter *confusion-range* 5)
 (defparameter *confusion-duration* 10)
@@ -213,6 +214,12 @@
 (defmethod entity-destroyed :after ((entity loc))
   (loc-remove-entity entity))
 
+(defun entities-near (x y range)
+  (iterate (for (x% y%) :within-radius range :origin (x y))
+           (when (and (in-bounds-p x% y%)
+                      (<= (distance x y x% y%) range))
+             (appending (lref x% y%)))))
+
 
 ;;;; Solid
 (define-aspect solid)
@@ -319,7 +326,7 @@
 (defun remove-item (item container)
   (assert (member item (container/contents container)))
   (removef (container/contents container) item)
-  (setf (containable/container item) container)
+  (setf (containable/container item) nil)
   (return-item-to-world item container))
 
 
@@ -342,7 +349,7 @@
 ;;;; Entities -----------------------------------------------------------------
 
 ;;;; Corpses
-(define-entity corpse (loc renderable flavor))
+(define-entity corpse (loc renderable flavor containable))
 
 (defun create-corpse-from (entity)
   (create-entity 'corpse
@@ -363,7 +370,7 @@
     :loc/y y
     :renderable/glyph #\g
     :renderable/color (blt:rgba 0 255 0)
-    :flavor/name "A goblin"
+    :flavor/name "a goblin"
     :destructible/maximum-hp 10
     :attacker/damage '(1 4 -1)))
 
@@ -373,7 +380,7 @@
     :loc/y y
     :renderable/glyph #\o
     :renderable/color (blt:rgba 0 200 80)
-    :flavor/name "An orc"
+    :flavor/name "an orc"
     :destructible/maximum-hp 15
     :destructible/armor 1
     :attacker/penetration 1
@@ -385,7 +392,7 @@
     :loc/y y
     :renderable/glyph #\T
     :renderable/color (blt:rgba 0 180 0)
-    :flavor/name "A troll"
+    :flavor/name "a troll"
     :destructible/maximum-hp 40
     :attacker/damage '(2 3 +1)))
 
@@ -425,7 +432,7 @@
 
 (defun use-healing-potion (user)
   (when (destructible? user)
-    (heal target (d 3 6 +1))))
+    (heal user (d 3 6 +1))))
 
 
 ;;;; Scroll of Lightning
@@ -455,6 +462,40 @@
              nil))))
 
 
+;;;; Scroll of Fireball
+(define-entity scroll-of-fireball (loc renderable flavor containable usable))
+
+(defun create-scroll-of-fireball (x y)
+  (create-entity 'healing-potion
+    :loc/x x
+    :loc/y y
+    :renderable/glyph #\?
+    :renderable/color (blt:yellow :saturation 0.3)
+    :renderable/layer *layer-items*
+    :flavor/name "a scroll of fireball"
+    :usable/effect 'use-scroll-of-fireball))
+
+
+(defun fireball-damage (x y)
+  (iterate
+    (for entity :in (entities-near x y *fireball-range*))
+    (when (destructible? entity)
+      (let ((damage (d 2 10 +6)))
+        (message "~A [color=red]burns[/color] for ~D damage!"
+                 (flavor/name entity)
+                 damage)
+        (hurt entity damage)))))
+
+(defun use-scroll-of-fireball (user)
+  (declare (ignore user))
+  (multiple-value-bind (x y) (mouse-select-coords #'visiblep)
+    (if x
+      (progn (message "[color=red]Whoosh![/color]")
+             (fireball-damage x y)
+             t)
+      nil)))
+
+
 ;;;; Scroll of Confusion
 (define-entity scroll-of-confusion (loc renderable flavor containable usable))
 
@@ -470,14 +511,11 @@
 
 (defun use-scroll-of-confusion (user)
   (declare (ignore user))
-  (let ((target (closest-monster *confusion-range*)))
-    (if target
-      (progn (message "~A begins to wander around aimlessly."
-                      (flavor/name target))
-             (swap-brain target 'confused-ai *confusion-duration*)
-             t)
-      (progn (message "There are no targets in range.")
-             nil))))
+  (when-let* ((target (mouse-select-monster #'visiblep)))
+    (progn (message "~A begins to wander around aimlessly."
+                    (flavor/name target))
+           (swap-brain target 'confused-ai *confusion-duration*)
+           t)))
 
 
 ;;;; Game Logic ---------------------------------------------------------------
@@ -514,7 +552,13 @@
     (rl.bsp::random-room-point (random-room))))
 
 
+(defun log-items-stepped-on (x y)
+  (let ((things (lref x y)))
+    (when things
+      (message "You see ~{~A~^, ~} here" (mapcar #'flavor/name things)))))
+
 (defun player-move-to (x y)
+  (log-items-stepped-on x y)
   (prog1
       (move-to *player* x y)
     (recompute-fov)))
@@ -605,9 +649,10 @@
                      (10 . create-troll))))
 
 (defparameter *item-selection*
-  (make-weightlist '((60 . create-healing-potion)
-                     (15 . create-scroll-of-lightning)
-                     (15 . create-scroll-of-confusion))))
+  (make-weightlist '((40 . create-healing-potion)
+                     (20 . create-scroll-of-lightning)
+                     (20 . create-scroll-of-confusion)
+                     (20 . create-scroll-of-fireball))))
 
 
 (defun create-random-monster (x y)
@@ -683,7 +728,8 @@
     (setf (aref *fov-map* x y) t)))
 
 (defun visiblep (x y)
-  (aref *fov-map* x y))
+  (and (in-bounds-p x y)
+       (aref *fov-map* x y)))
 
 (defun recompute-fov ()
   (clear-fov-map)
@@ -695,15 +741,13 @@
   (iterate
     (with px = (loc/x *player*))
     (with py = (loc/y *player*))
-    (for entity :in (map-entities #'identity 'monster))
+    (for entity :in (entities-near px py range))
     (for ex = (loc/x entity))
     (for ey = (loc/y entity))
-    (when ex
-      (for distance = (distance px py ex ey))
-      (when (and (not (eq entity *player*))
-                 (visiblep ex ey)
-                 (<= distance range))
-        (finding entity :minimizing distance)))))
+    (for distance = (distance px py ex ey))
+    (when (and (not (eq entity *player*))
+               (visiblep ex ey))
+      (finding entity :minimizing distance))))
 
 
 ;;;; Message Log --------------------------------------------------------------
@@ -774,13 +818,15 @@
 (defun warp-player ()
   (multiple-value-bind (x y) (mouse-coords)
     (when (in-bounds-p x y)
-      (setf (loc/x *player*) x
-            (loc/y *player*) y)
+      (move-to *player* x y)
       (recompute-fov))))
 
 (defun reveal-map ()
   (do-array (tile *map*)
     (setf (tile-seen tile) t)))
+
+(defun give-player (entity)
+  (insert-item entity *player*))
 
 
 ;;;; Config -------------------------------------------------------------------
@@ -879,7 +925,7 @@
 (define-state-machine-macros)
 
 
-;;;; Drawing ------------------------------------------------------------------
+;;;; Drawing, Menus, Etc ------------------------------------------------------
 (defun centered (width height)
   (lambda (w h)
     (values (floor (- w width) 2)
@@ -912,7 +958,7 @@
 
 (defmacro with-message-box ((width height contents) &body body)
   (once-only (width height)
-    `(rl.panels::with-panel (,(gensym)
+    `(rl.panels::with-panel (:message-box panel
                              (centered ,width ,height)
                              (curry 'draw-message-box ,contents ,width ,height)
                              :background-color (blt:black :alpha 0.7)
@@ -1074,12 +1120,13 @@
                    (princ string s)
                    (finally (setf width (max w (length prompt))
                                   height (+ 2 h)))))))
-    (rl.panels::with-panel (panel (centered (+ 4 width) (+ 4 (* 2 height)))
-                                  (lambda (panel)
-                                    (setf (blt:font) "text")
-                                    (rl.panels::print panel 2 2 text))
-                                  :border :double
-                                  :background-color (blt:black))
+    (rl.panels::with-panel (:selection-menu panel
+                            (centered (+ 4 width) (+ 4 (* 2 height)))
+                            (lambda (panel)
+                              (setf (blt:font) "text")
+                              (rl.panels::print panel 2 2 text))
+                            :border :double
+                            :background-color (blt:black))
       (iterate
         (blit)
         (for selection = (get-selection-event))
@@ -1102,6 +1149,35 @@
            (if ,choice
              (progn ,@body)
              (transition state-play)))))))
+
+
+(defun draw-mouse-overlay (validp panel)
+  (multiple-value-bind (x y)
+      (mouse-coords)
+    (setf (blt:color) (if (funcall validp x y)
+                        (blt:red :alpha 0.5)
+                        (blt:gray :alpha 0.5))
+          (blt:font) "tile"
+          (rl.panels::cell-char panel (* 2 x) (* 2 y)) #\full_block)))
+
+(defun mouse-select-coords (&optional (validp (constantly t)))
+  (rl.panels::with-panel (:mouse-overlay panel
+                          (rl.panels::stretch)
+                          (curry #'draw-mouse-overlay validp))
+    (iterate (blit)
+             (event-case-blocking
+               (:mouse-left
+                (for (values x y) = (mouse-coords))
+                (when (funcall validp x y)
+                  (return-from mouse-select-coords (values x y))))
+               (:escape (return-from mouse-select-coords nil))))))
+
+(defun mouse-select-monster (&optional (validp (constantly t)))
+  (flet ((monster-at (x y)
+           (find-if #'monster? (lref x y))))
+    (multiple-value-bind (x y)
+        (mouse-select-coords (conjoin validp #'monster-at))
+      (when x (monster-at x y)))))
 
 
 ;;;; States -------------------------------------------------------------------
@@ -1139,11 +1215,17 @@
 
 
 (define-state state-pick-up
-  (choose-and-do ("What would you like to pick up?"
-                  "There's nothing to pick up."
-                  choice (find-items-to-pick-up) #'flavor/name)
-    (insert-item choice *player*)
-    (transition state-tick)))
+  (if (container-full-p *player*)
+    (with-message-box (40 4 "You can't carry any more items.")
+      (blit)
+      (press-space-or-escape)
+      (transition state-play))
+    (choose-and-do ("What would you like to pick up?"
+                    "There's nothing to pick up."
+                    choice (find-items-to-pick-up) #'flavor/name)
+      (message "You take ~A" (flavor/name choice))
+      (insert-item choice *player*)
+      (transition state-tick))))
 
 
 ;;;; Drop
@@ -1152,10 +1234,11 @@
                   "You don't have anything to drop."
                   choice (container/contents *player*) #'flavor/name)
     (remove-item choice *player*)
+    (message "You drop ~A" (flavor/name choice))
     (transition state-tick)))
 
 
-;;;; Play
+;;;; Inventory
 (define-state state-inventory
   (choose-and-do ("You are carrying:"
                   "You're not carrying anything."
@@ -1240,21 +1323,24 @@
 ;;;; Initialize
 (define-state state-initialize
   (rl.panels::with-panels
-    ((*map-panel* (lambda (width height)
-                    (values 0 0 width (- height (* 2 *status-height*))))
-                  'draw-map
-                  :layers 6)
-     (*status-panel* (lambda (width height)
-                       (declare (ignore width))
-                       (values 0 (- height (* 2 *status-height*))
-                               (* 2 *status-width*) (* 2 *status-height*)))
-                     'draw-status)
-     (*message-panel* (lambda (width height)
-                        (values (1+ (* 2 *status-width*))
-                                (- height (* 2 *status-height*))
-                                (- width (* 2 *status-width*) 1)
-                                (* 2 *status-height*)))
-                      'draw-messages))
+    ((:map *map-panel*
+      (lambda (width height)
+        (values 0 0 width (- height (* 2 *status-height*))))
+      'draw-map
+      :layers 6)
+     (:status *status-panel*
+      (lambda (width height)
+        (declare (ignore width))
+        (values 0 (- height (* 2 *status-height*))
+                (* 2 *status-width*) (* 2 *status-height*)))
+      'draw-status)
+     (:message-log *message-panel*
+      (lambda (width height)
+        (values (1+ (* 2 *status-width*))
+                (- height (* 2 *status-height*))
+                (- width (* 2 *status-width*) 1)
+                (* 2 *status-height*)))
+      'draw-messages))
     ;; Just call normally, so these panels stick around til we quit.
     (state-generate)))
 
@@ -1262,7 +1348,8 @@
 ;;;; Generate
 (define-state state-generate
   (setf *world-ready* nil)
-  (rl.panels::with-panel (p (rl.panels::stretch) 'draw-generate-message)
+  (rl.panels::with-panel (:splash panel
+                          (rl.panels::stretch) 'draw-generate-message)
     (blit)
     (iterate (with generator = (bt:make-thread #'generate))
              (unless (bt:thread-alive-p generator)

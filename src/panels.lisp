@@ -22,9 +22,10 @@
    border-color
    background-color
    compute-geometry
-   draw-panel))
+   draw-panel
+   name))
 
-(defun make-panel (compute-geometry draw-panel
+(defun make-panel (name compute-geometry draw-panel
                    &key border border-color background-color layers)
   (multiple-value-bind (x y width height)
       (funcall compute-geometry *screen-width* *screen-height*)
@@ -35,7 +36,12 @@
       :layers layers
       :border border
       :border-color border-color
-      :background-color background-color)))
+      :background-color background-color
+      :name name)))
+
+(defmethod print-object ((p panel) stream)
+  (print-unreadable-object (p stream :type t :identity t)
+    (princ (panel-name p) stream)))
 
 
 ;;;; Geometry -----------------------------------------------------------------
@@ -87,18 +93,18 @@
         "Popped a panel other than the one intended to be popped.")))
   (values))
 
-(defmacro with-panel ((panel-name compute-geometry draw-panel &key
+(defmacro with-panel ((panel-name panel-var compute-geometry draw-panel &key
                                   border (border-color (blt:white))
                                   background-color (layers 2))
                       &body body)
-  `(let ((,panel-name (make-panel ,compute-geometry ,draw-panel
-                                  :layers ,layers
-                                  :border ,border
-                                  :border-color ,border-color
-                                  :background-color ,background-color)))
-     (push-panel ,panel-name)
+  `(let ((,panel-var (make-panel ,panel-name ,compute-geometry ,draw-panel
+                                 :layers ,layers
+                                 :border ,border
+                                 :border-color ,border-color
+                                 :background-color ,background-color)))
+     (push-panel ,panel-var)
      (unwind-protect (progn ,@body)
-       (pop-panel ,panel-name))))
+       (pop-panel ,panel-var))))
 
 (defmacro with-panels (panels &body body)
   (if (null panels)
@@ -178,78 +184,3 @@
 (defun draw-panels ()
   (map nil #'draw-panel *panels*))
 
-
-;;;; Test
-(defparameter *running* t)
-
-(defun config ()
-  (blt:set "font: ~A, size=~Dx~:*~D, spacing=1x1;"
-           (rl::asset-path "ProggySquare/ProggySquare.ttf")
-           16)
-  (blt:set (format nil "window.size = ~Dx~D" *screen-width* *screen-height*))
-  (blt:set "window.title = paneltest")
-  (blt:set "window.resizeable = true")
-  (blt:set "window.cellsize = ~Dx~:*~D" 16)
-  (blt:set "output.vsync = true")
-  (blt:set "input.filter = keyboard, mouse"))
-
-(defun draw ()
-  (blt:clear)
-  (draw-panels)
-  (blt:refresh))
-
-(defun read-event ()
-  (if (blt:has-input-p)
-    (let ((event (blt:read)))
-      (handle-event-for-panels event)
-      (blt:key-case event
-        (:escape :quit)
-        (:close :quit)))
-    :done))
-
-(defun handle-event (event)
-  (ecase event
-    (:quit (setf *running* nil))))
-
-(defun handle-events ()
-  (iterate
-    (for event = (read-event))
-    (until (eql event :done))
-    (when event
-      (handle-event event))))
-
-(defun draw-status-bar (panel)
-  (setf (blt:color) (blt:white))
-  (print panel 0 0 "Hello, world!"))
-
-(defun draw-example-panel (panel)
-  (print panel 0 0 "INVENTORY"))
-
-(defun run-panel-test ()
-  (blt:with-terminal
-    (config)
-    (setf *running* t)
-    (setf (blt:color) (blt:white))
-    (with-panels
-      ((p1 (stretch)
-           #'identity
-           :border :heavy
-           :border-color (blt:white)
-           :background-color (blt:gray :value 0.1))
-       (p2 (fixed 10 27 20 5)
-           #'identity
-           :border :double
-           :border-color (blt:green))
-       (p3 (stretch-horizontally 10 :bottom)
-           'draw-status-bar
-           :background-color (blt:orange :value 0.2)
-           )
-       (p3 (fixed 40 27 20 5)
-           'draw-example-panel
-           :background-color (blt:gray :value 0.6))
-       (p4 (stretch-vertically 5 :right)
-           #'identity
-           :background-color (blt:chartreuse)))
-      (iterate (while *running*)
-               (draw)
-               (handle-events)))))
