@@ -12,7 +12,9 @@
 
 (defparameter *max-monsters-per-room* 3)
 (defparameter *max-items-per-room* 2)
-
+(defparameter *lightning-range* 8)
+(defparameter *confusion-range* 5)
+(defparameter *confusion-duration* 10)
 (defconstant +color-light-wall+ (blt:white :value 0.7))
 (defconstant +color-light-ground+ (blt:white :value 0.5))
 (defconstant +color-dark-wall+ (blt:white :value 0.4))
@@ -217,7 +219,8 @@
 
 
 ;;;; Brains
-(define-aspect brain)
+(define-aspect brain
+  (ai-function :initform 'simple-ai))
 
 
 ;;;; Destructible
@@ -263,13 +266,13 @@
                           (attacker/penetration attacker))))
          (total (- damage armor)))
     (if (zerop total)
-      (message (format nil "~A hit ~A, but didn't get past the armor."
-                       (flavor/name attacker)
-                       (flavor/name defender)))
-      (message (format nil "~A hit ~(~A~) for ~D damage!"
-                       (flavor/name attacker)
-                       (flavor/name defender)
-                       total)))
+      (message "~A hit ~A, but didn't get past the armor."
+               (flavor/name attacker)
+               (flavor/name defender))
+      (message "~A hit ~(~A~) for ~D damage!"
+               (flavor/name attacker)
+               (flavor/name defender)
+               total))
     (hurt defender total)))
 
 (defun alivep (entity)
@@ -329,9 +332,11 @@
 (define-aspect usable
   (effect :type function))
 
-(defun use (item target)
-  (prog1 (funcall (usable/effect item) target)
-    (destroy-entity item)))
+(defun use (item user)
+  (let ((valid (funcall (usable/effect item) user)))
+    (when valid
+      (destroy-entity item))
+    valid))
 
 
 ;;;; Entities -----------------------------------------------------------------
@@ -418,9 +423,61 @@
     :flavor/name "a healing potion"
     :usable/effect 'use-healing-potion))
 
-(defun use-healing-potion (target)
-  (when (destructible? target)
+(defun use-healing-potion (user)
+  (when (destructible? user)
     (heal target (d 3 6 +1))))
+
+
+;;;; Scroll of Lightning
+(define-entity scroll-of-lightning (loc renderable flavor containable usable))
+
+(defun create-scroll-of-lightning (x y)
+  (create-entity 'healing-potion
+    :loc/x x
+    :loc/y y
+    :renderable/glyph #\?
+    :renderable/color (blt:yellow :saturation 0.3)
+    :renderable/layer *layer-items*
+    :flavor/name "a scroll of lightning"
+    :usable/effect 'use-scroll-of-lightning))
+
+(defun use-scroll-of-lightning (user)
+  (declare (ignore user))
+  (let ((target (closest-monster *lightning-range*))
+        (damage (d 4 10)))
+    (if target
+      (progn (message "[color=yellow]BZZZZZZT![/color] ~A was zapped for ~D damage."
+                      (flavor/name target)
+                      damage)
+             (hurt target damage)
+             t)
+      (progn (message "There are no targets in range.")
+             nil))))
+
+
+;;;; Scroll of Confusion
+(define-entity scroll-of-confusion (loc renderable flavor containable usable))
+
+(defun create-scroll-of-confusion (x y)
+  (create-entity 'healing-potion
+    :loc/x x
+    :loc/y y
+    :renderable/glyph #\?
+    :renderable/color (blt:yellow :saturation 0.3)
+    :renderable/layer *layer-items*
+    :flavor/name "a scroll of confusion"
+    :usable/effect 'use-scroll-of-confusion))
+
+(defun use-scroll-of-confusion (user)
+  (declare (ignore user))
+  (let ((target (closest-monster *confusion-range*)))
+    (if target
+      (progn (message "~A begins to wander around aimlessly."
+                      (flavor/name target))
+             (swap-brain target 'confused-ai *confusion-duration*)
+             t)
+      (progn (message "There are no targets in range.")
+             nil))))
 
 
 ;;;; Game Logic ---------------------------------------------------------------
@@ -509,13 +566,32 @@
 ;;; AI
 (defvar *turn* 0)
 
-(define-system act ((entity brain))
+(defun simple-ai (entity)
   (when (visiblep (loc/x entity) (loc/y entity))
     (cond
       ((>= (distance-to entity *player*) 2)
        (move-toward entity (loc/x *player*) (loc/y *player*)))
       ((alivep *player*)
        (attack entity *player*)))))
+
+(defun confused-ai (entity)
+  (move entity
+        (random-range-inclusive -1 1)
+        (random-range-inclusive -1 1)))
+
+(defun swap-brain (entity new-ai turns)
+  (let ((old-ai (brain/ai-function entity))
+        (remaining turns))
+    (setf (brain/ai-function entity)
+          (lambda (entity)
+            (prog1 (funcall new-ai entity)
+              (when (zerop (decf remaining))
+                (setf (brain/ai-function entity) old-ai)))))))
+
+
+(define-system act ((entity brain))
+  (funcall (brain/ai-function entity) entity))
+
 
 (defun tick ()
   (incf *turn*)
@@ -529,7 +605,9 @@
                      (10 . create-troll))))
 
 (defparameter *item-selection*
-  (make-weightlist '((100 . create-healing-potion))))
+  (make-weightlist '((60 . create-healing-potion)
+                     (15 . create-scroll-of-lightning)
+                     (15 . create-scroll-of-confusion))))
 
 
 (defun create-random-monster (x y)
@@ -613,14 +691,29 @@
                #'opaquep #'mark-visible))
 
 
+(defun closest-monster (range)
+  (iterate
+    (with px = (loc/x *player*))
+    (with py = (loc/y *player*))
+    (for entity :in (map-entities #'identity 'monster))
+    (for ex = (loc/x entity))
+    (for ey = (loc/y entity))
+    (when ex
+      (for distance = (distance px py ex ey))
+      (when (and (not (eq entity *player*))
+                 (visiblep ex ey)
+                 (<= distance range))
+        (finding entity :minimizing distance)))))
+
+
 ;;;; Message Log --------------------------------------------------------------
 (defvar *messages* nil)
 
 (defparameter *messages-width* 30)
 (defparameter *messages-height* 4)
 
-(defun message (string)
-  (push string *messages*)
+(defun message (string &rest format-arguments)
+  (push (apply #'format nil string format-arguments) *messages*)
   (zapf *messages* (take *messages-height* %)))
 
 
@@ -635,9 +728,9 @@
               (a* :start start
                   :neighbors (lambda (coords)
                                (iterate
-                                 (for (dx dy) :within-radius 1 :skip-origin t)
-                                 (for x = (+ (realpart coords) dx))
-                                 (for y = (+ (imagpart coords) dy))
+                                 (for (x y) :within-radius 1 :skip-origin t
+                                      :origin ((realpart coords)
+                                               (imagpart coords)))
                                  (when (and (in-bounds-p x y)
                                             (not (blockedp x y)))
                                    (collect (complex x y)))))
@@ -1034,8 +1127,9 @@
   (choose-and-do ("What would you like to use?"
                   "You don't have anything you can use."
                   choice (find-items-to-use) #'flavor/name)
-    (use choice *player*)
-    (transition state-tick)))
+    (if (use choice *player*)
+      (transition state-tick)
+      (transition state-play))))
 
 
 ;;;; Pick Up
