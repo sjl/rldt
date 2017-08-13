@@ -11,7 +11,8 @@
                :cl-pcg
                :iterate
                :losh
-               :pileup)
+               :pileup
+               :png-read)
 
   :serial t
   :components ((:module "vendor" :serial t

@@ -30,6 +30,7 @@
 (defparameter *layer-mobs* 3)
 (defparameter *layer-player* 4)
 
+(defparameter *image-splash* nil)
 (defvar *map-panel* nil)
 (defvar *status-panel* nil)
 (defvar *message-panel* nil)
@@ -853,6 +854,9 @@
              *cell-size*
              (asset-path "codepage.txt"))))
 
+(defun load-assets ()
+  (setf *image-splash* (png-read:read-png-file (asset-path "splash.png"))))
+
 (defun config ()
   (assert (evenp *cell-size*))
   (blt:set (format nil "window.size = ~Dx~D" (* 2 *screen-width*) (* 2 *screen-height*)))
@@ -861,6 +865,7 @@
   (blt:set "window.resizeable = true")
   (blt:set "output.vsync = true")
   (blt:set "input.filter = keyboard, mouse")
+  (load-assets)
   (config-fonts))
 
 
@@ -1180,12 +1185,47 @@
       (when x (monster-at x y)))))
 
 
+(defun draw-image-to-panel (panel image)
+  (iterate
+    (with data = (png-read:image-data image))
+    (with image-width = (png-read:width image))
+    (with image-height = (png-read:height image))
+    (with panel-width = (rl.panels::panel-width panel))
+    (with panel-height = (rl.panels::panel-height panel))
+
+    (for-nested ((x :from 0 :below panel-width)
+                 (y :from 0 :below panel-height)))
+
+    (for ix = (truncate (map-range 0 panel-width 0 image-width x)))
+    (for iy = (truncate (map-range 0 panel-height 0 image-height y)))
+
+    (setf (blt:color) (blt:rgba (aref data ix iy 0)
+                                (aref data ix iy 1)
+                                (aref data ix iy 2)
+                                255)
+          (rl.panels::cell-char panel x y) #\full_block)))
+
+(defun draw-splash-image (panel)
+  (draw-image-to-panel panel *image-splash*))
+
+(defun draw-main-menu (panel)
+  (setf (blt:color) (blt:white)
+        (blt:font) "text")
+  (rl.panels::print
+    panel 0 2
+    "/r/[color=red]r[/color]ogue[color=red]l[/color]ike[color=red]d[/color]ev [color=red]t[/color]utorial"
+    :width (rl.panels::panel-width panel)
+    :halign :center)
+  (rl.panels::print panel 2 5 "[color=red]p[/color]lay game")
+  (rl.panels::print panel 2 7 "[color=red]q[/color]uit"))
+
+
 ;;;; States -------------------------------------------------------------------
 ;;;; Dead
 (define-state state-dead
   (with-message-box (20 6 "You have died.")
     (event-case-blocking
-      ((or :escape :space) (transition state-generate)))))
+      ((or :escape :space) t))))
 
 
 ;;;; Tick
@@ -1320,6 +1360,20 @@
       (:wait (heal *player* 1) (transition state-tick)))))
 
 
+;;;; Generate
+(define-state state-generate
+  (setf *world-ready* nil)
+  (rl.panels::with-panel (:splash panel
+                          (rl.panels::stretch) 'draw-generate-message)
+    (blit)
+    (iterate (with generator = (bt:make-thread #'generate))
+             (unless (bt:thread-alive-p generator)
+               (setf *world-ready* t)
+               (transition state-play))
+             (get-event)
+             (blt:sleep 1/60))))
+
+
 ;;;; Initialize
 (define-state state-initialize
   (rl.panels::with-panels
@@ -1342,26 +1396,27 @@
                 (* 2 *status-height*)))
       'draw-messages))
     ;; Just call normally, so these panels stick around til we quit.
-    (state-generate)))
+    (state-generate))
+  (transition state-main-menu))
 
 
-;;;; Generate
-(define-state state-generate
-  (setf *world-ready* nil)
-  (rl.panels::with-panel (:splash panel
-                          (rl.panels::stretch) 'draw-generate-message)
+;;;; Main Menu
+(define-state state-main-menu
+  (rl.panels::with-panels ((:splash-image panel
+                            (rl.panels::stretch) 'draw-splash-image)
+                           (:main-menu panel
+                            (centered 40 11) 'draw-main-menu
+                            :background-color (blt:black)
+                            :border :double))
     (blit)
-    (iterate (with generator = (bt:make-thread #'generate))
-             (unless (bt:thread-alive-p generator)
-               (setf *world-ready* t)
-               (transition state-play))
-             (get-event)
-             (blt:sleep 1/60))))
+    (event-case-blocking
+      (:p (transition state-initialize))
+      (:q t))))
 
 
-;;;; Start
-(define-state state-start
-  (transition state-initialize))
+;;;; Entry
+(define-state state-entry
+  (transition state-main-menu))
 
 
 ;;;; Main ---------------------------------------------------------------------
@@ -1372,24 +1427,40 @@
     (config)
     (blit)
     (rl.panels::initialize-panels)
-    (state-start)))
+    (state-entry)))
 
 
 ;;;; Entry --------------------------------------------------------------------
 (defun unfuck-mac-path ()
-  (sb-posix:chdir (let ((suffix "Contents/MacOS/rldt")
-                        (path (uiop:native-namestring sb-ext:*runtime-pathname*)))
-                    (subseq path 0 (- (length path) (length suffix)))))
+  (let* ((suffix "Contents/MacOS/rldt")
+         (path (uiop:native-namestring sb-ext:*runtime-pathname*))
+         (actual-god-damn-namestring
+           (subseq path 0 (- (length path) (length suffix))))
+         (actual-god-damn-pathname
+           (uiop:ensure-pathname actual-god-damn-namestring
+                                 :ensure-directory t)))
+    (sb-posix:chdir actual-god-damn-namestring)
+    (setf *default-pathname-defaults* actual-god-damn-pathname))
   t)
 
 
 (defun main ()
   (setf *random-state* (make-random-state t))
+  (sb-ext:disable-debugger)
   (run)
   t)
 
+(defmacro with-open-file-dammit ((stream filespec &rest options) &body body)
+  `(let ((,stream (open ,filespec ,@options)))
+     (unwind-protect (progn ,@body)
+       (when ,stream (close ,stream)))))
+
 (defun main-mac ()
-  (unfuck-mac-path)
-  (cffi:use-foreign-library blt:bearlibterminal)
-  (setf *assets-directory* "./Contents/Resources/assets/")
-  (main))
+  (with-open-file-dammit (*error-output* "/Users/sjl/src/rldt/errors.log"
+                                         :direction :output
+                                         :if-exists :supersede)
+    (unfuck-mac-path)
+    (handler-bind ((style-warning #'muffle-warning))
+      (cffi:use-foreign-library blt:bearlibterminal))
+    (setf *assets-directory* "./Contents/Resources/assets/")
+    (main)))
