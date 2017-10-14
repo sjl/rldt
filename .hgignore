@@ -7,3 +7,4 @@ syntax: glob
 scratch.lisp
 build/rldt.app
 *.log
+bin
