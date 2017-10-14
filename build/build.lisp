@@ -1,8 +1,11 @@
-(ql:quickload 'rldt)
+(ql:quickload '(deploy rldt))
+
+(setf deploy:*info-plist-template* "build/Info.plist")
+
+(deploy:define-library blt:bearlibterminal
+  :system :cl-blt)
+
+(deploy:define-resource-directory assets "assets/")
 
 (sb-ext:gc :full t)
-
-(sb-ext:save-lisp-and-die
-  "build/rldt"
-  :toplevel #'rl:main
-  :executable t)
+(asdf:operate :build-op :rldt)

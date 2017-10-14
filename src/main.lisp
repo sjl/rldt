@@ -43,7 +43,8 @@
 (defvar *game-state* :running)
 (defvar *world-ready* nil)
 
-(defparameter *assets-directory* "./assets/")
+(defparameter *assets-directory*
+  (merge-pathnames #p"assets/" (deploy:data-directory)))
 
 
 ;;;; Types --------------------------------------------------------------------
@@ -832,7 +833,9 @@
 
 ;;;; Config -------------------------------------------------------------------
 (defun asset-path (filename)
-  (concatenate 'string *assets-directory* filename))
+  (-<> filename
+    (merge-pathnames (pathname <>) *assets-directory*)
+    (namestring <>)))
 
 (defun config-fonts ()
   (blt:set "simple font: ~A, size=~Dx~:*~D, spacing=1x1;"
@@ -1431,36 +1434,21 @@
 
 
 ;;;; Entry --------------------------------------------------------------------
-(defun unfuck-mac-path ()
-  (let* ((suffix "Contents/MacOS/rldt")
-         (path (uiop:native-namestring sb-ext:*runtime-pathname*))
-         (actual-god-damn-namestring
-           (subseq path 0 (- (length path) (length suffix))))
-         (actual-god-damn-pathname
-           (uiop:ensure-pathname actual-god-damn-namestring
-                                 :ensure-directory t)))
-    (sb-posix:chdir actual-god-damn-namestring)
-    (setf *default-pathname-defaults* actual-god-damn-pathname))
-  t)
-
-
-(defun main ()
-  (setf *random-state* (make-random-state t))
-  (sb-ext:disable-debugger)
-  (run)
-  t)
-
 (defmacro with-open-file-dammit ((stream filespec &rest options) &body body)
   `(let ((,stream (open ,filespec ,@options)))
      (unwind-protect (progn ,@body)
        (when ,stream (close ,stream)))))
 
-(defun main-mac ()
+(defun main ()
+  (sb-ext:disable-debugger)
+  (setf *random-state* (make-random-state t))
   (with-open-file-dammit (*error-output* "/Users/sjl/src/rldt/errors.log"
                                          :direction :output
                                          :if-exists :supersede)
-    (unfuck-mac-path)
-    (handler-bind ((style-warning #'muffle-warning))
-      (cffi:use-foreign-library blt:bearlibterminal))
-    (setf *assets-directory* "./Contents/Resources/assets/")
-    (main)))
+    (with-open-file-dammit (*standard-output* "/Users/sjl/src/rldt/out.log"
+                                              :direction :output
+                                              :if-exists :supersede)
+      (pr "Starting.")
+      (run)))
+  (sb-ext:exit :code 0))
+
